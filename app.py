@@ -42,11 +42,12 @@ from PySide6.QtGui import (
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QCompleter, QDateEdit, QDialog, QDialogButtonBox,
-    QAbstractItemView, QComboBox, QHeaderView, QTableWidget, QTableWidgetItem, QDoubleSpinBox, QFileDialog, QInputDialog, QMessageBox, QPlainTextEdit, QRadioButton, QSystemTrayIcon, QSpinBox, QFrame, QGridLayout, QHBoxLayout, QLabel,
+    QAbstractItemView, QComboBox, QHeaderView, QTableWidget, QTableWidgetItem, QDoubleSpinBox, QFileDialog, QTextBrowser, QInputDialog, QMessageBox, QPlainTextEdit, QRadioButton, QSystemTrayIcon, QSpinBox, QFrame, QGridLayout, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu, QProgressBar, QPushButton,
     QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
 
+import anleitung
 import begruendung
 import update
 import tr_import
@@ -190,6 +191,7 @@ QDialogButtonBox QPushButton:hover { background: @feldhover; }
 QDialogButtonBox QPushButton:default { background: @akzent; color: #050505; border: none; }
 QDialogButtonBox QPushButton:disabled { color: @leise; background: @feld; }
 QFrame#depotzeile { background: transparent; border-radius: 8px; }
+QTextBrowser#anleitung { background: transparent; border: none; selection-background-color: @leise; }
 QPushButton#update {
   background: rgba(25,230,162,22); color: #19e6a2; border: 1px solid rgba(25,230,162,90);
   border-radius: 8px; padding: 6px 12px; font-size: 12px; font-weight: 600;
@@ -809,6 +811,9 @@ ICON_FORMEN = {
     "haus": '<path d="M4 10.8L12 4.5l8 6.3V19a1.2 1.2 0 0 1-1.2 1.2H15v-5.4h-6v5.4H5.2A1.2 1.2 0 0 1 4 19z"/>',
     "import": '<path d="M12 4v11"/><path d="M7.5 10.5L12 15l4.5-4.5"/>'
               '<path d="M5 14.5v3.3A2.2 2.2 0 0 0 7.2 20h9.6a2.2 2.2 0 0 0 2.2-2.2v-3.3"/>',
+    "buch": '<path d="M4.5 5.5A1.5 1.5 0 0 1 6 4h5v15H6a1.5 1.5 0 0 0-1.5 1.5z"/>'
+            '<path d="M19.5 5.5A1.5 1.5 0 0 0 18 4h-5v15h5a1.5 1.5 0 0 1 1.5 1.5z"/>'
+            '<path d="M4.5 20.5V5.5M19.5 20.5V5.5"/>',
     "funke": '<path d="M12 3.5c.6 4.3 2.2 5.9 6.5 6.5-4.3.6-5.9 2.2-6.5 6.5-.6-4.3-2.2-5.9'
              '-6.5-6.5 4.3-.6 5.9-2.2 6.5-6.5z"/><path d="M18.5 15.5v4M16.5 17.5h4"/>',
 }
@@ -4168,7 +4173,10 @@ class Schnellsuche(QDialog):
              ("regler", "Einstellungen", f.einstellungen_oeffnen),
              ("neu", "Alle Kurse neu laden", f.alle_laden),
              ("funke", "Neue Liste anlegen", f.liste_neu),
-             ("import", "Trade Republic importieren", f.depot_importieren)]
+             ("import", "Trade Republic importieren", f.depot_importieren),
+             ("buch", "Anleitung", lambda: f.ansicht_setzen("anleitung"))]
+        b += [("buch", f"Anleitung: {titel}", lambda k=kid: f.anleitung_oeffnen(k))
+              for kid, titel, _g, _h in anleitung.KAPITEL]
         t = f.detail.ticker
         if t and f.ansicht == "detail":
             b += [("plus", f"Kauf / Verkauf eintragen: {t}", lambda: f.kauf_eintragen(t)),
@@ -4295,7 +4303,14 @@ class HomeSeite(QWidget):
         self.untertitel = label("", "leise")
         kopf.addWidget(self.gruss)
         kopf.addWidget(self.untertitel)
-        lay.addLayout(kopf)
+        oben = QHBoxLayout()
+        oben.addLayout(kopf, 1)
+        hilfe = QPushButton("  Neu hier? Anleitung öffnen", objectName="chip")
+        hilfe.setIcon(icon("buch", None, 15))
+        hilfe.setCursor(Qt.PointingHandCursor)
+        hilfe.clicked.connect(lambda: self.ansicht.emit("anleitung"))
+        oben.addWidget(hilfe, 0, Qt.AlignBottom)
+        lay.addLayout(oben)
 
         self.indizes = QGridLayout()
         self.indizes.setSpacing(12)
@@ -4847,6 +4862,129 @@ class UpdateDialog(QDialog):
         self.spaeter.setEnabled(True)
 
 
+class AnleitungSeite(QWidget):
+    """Eingebaute Anleitung: Inhaltsverzeichnis mit Suche links, Kapitel rechts."""
+
+    def __init__(self):
+        super().__init__(objectName="detail")
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 6, 16)
+        lay.setSpacing(14)
+
+        links = karte()
+        links.setFixedWidth(260)
+        ll = QVBoxLayout(links)
+        ll.setContentsMargins(14, 16, 14, 14)
+        ll.setSpacing(10)
+        kopf = QHBoxLayout()
+        kopf.setSpacing(8)
+        kopf.addWidget(icon_label("buch", T["text"], 17))
+        kopf.addWidget(label("Anleitung", "kartentitel"))
+        kopf.addStretch()
+        ll.addLayout(kopf)
+        self.suche = QLineEdit(objectName="suche", placeholderText="Suchen, z. B. RSI …")
+        self.suche.setClearButtonEnabled(True)
+        self.suche.textChanged.connect(self._filtern)
+        ll.addWidget(self.suche)
+        self.inhalt = QListWidget(objectName="palettenliste")
+        self.inhalt.currentItemChanged.connect(lambda item, _alt: self._zeigen(item))
+        ll.addWidget(self.inhalt, 1)
+        lay.addWidget(links)
+
+        rechts = karte()
+        rl = QVBoxLayout(rechts)
+        rl.setContentsMargins(34, 26, 34, 18)
+        rl.setSpacing(10)
+        self.text = QTextBrowser(objectName="anleitung")
+        self.text.setOpenExternalLinks(True)
+        self.text.document().setDocumentMargin(0)
+        self.text.document().setDefaultStyleSheet(
+            f"h1 {{ font-size: 24px; font-weight: 500; margin-bottom: 10px; }}"
+            f"h3 {{ font-size: 15px; font-weight: 600; margin-top: 18px; margin-bottom: 4px; }}"
+            f"p, li, td {{ font-size: 14px; line-height: 150%; color: {T['text']}; }}"
+            f"i {{ color: {T['leise']}; }}"
+            f"a {{ color: {GOLD}; }}")
+        rl.addWidget(self.text, 1)
+        unten = QHBoxLayout()
+        self.zurueck = QPushButton("←  Zurück", objectName="chip")
+        self.weiter = QPushButton("Weiter  →", objectName="chip")
+        for b in (self.zurueck, self.weiter):
+            b.setCursor(Qt.PointingHandCursor)
+        self.zurueck.clicked.connect(lambda: self._blaettern(-1))
+        self.weiter.clicked.connect(lambda: self._blaettern(1))
+        self.position = label("", "klein")
+        unten.addWidget(self.zurueck)
+        unten.addStretch()
+        unten.addWidget(self.position)
+        unten.addStretch()
+        unten.addWidget(self.weiter)
+        rl.addLayout(unten)
+        lay.addWidget(rechts, 1)
+        self._ids = [k[0] for k in anleitung.KAPITEL]
+        self._filtern("")
+
+    def _filtern(self, text: str) -> None:
+        treffer = set(anleitung.suchen(text))
+        aktuell = self.inhalt.currentItem().data(Qt.UserRole) if self.inhalt.currentItem() \
+            else None
+        self.inhalt.blockSignals(True)
+        self.inhalt.clear()
+        gruppe = None
+        erstes = None
+        for kid, titel, grp, _ in anleitung.KAPITEL:
+            if kid not in treffer:
+                continue
+            if grp != gruppe:
+                gruppe = grp
+                kopf = QListWidgetItem(grp.upper())
+                kopf.setFlags(Qt.NoItemFlags)
+                kopf.setForeground(QColor(T["leise"]))
+                f = kopf.font()
+                f.setPixelSize(10)
+                f.setLetterSpacing(QFont.AbsoluteSpacing, 1.2)
+                kopf.setFont(f)
+                kopf.setSizeHint(QSize(0, 30))
+                self.inhalt.addItem(kopf)
+            item = QListWidgetItem(titel)
+            item.setData(Qt.UserRole, kid)
+            item.setSizeHint(QSize(0, 32))
+            self.inhalt.addItem(item)
+            if kid == aktuell or erstes is None:
+                erstes = item if (erstes is None or kid == aktuell) else erstes
+        self.inhalt.blockSignals(False)
+        if erstes is not None:
+            self.inhalt.setCurrentItem(erstes)
+            self._zeigen(erstes)
+        else:
+            self.text.setHtml(f"<p style='color:{T['leise']}'>Nichts gefunden.</p>")
+
+    def _zeigen(self, item) -> None:
+        if not item or not item.data(Qt.UserRole):
+            return
+        kid = item.data(Qt.UserRole)
+        farben = {"gruen": T["gruen"], "rot": T["rot"], "grau": T["grau"],
+                  "kasten": "#0f1513"}
+        self.text.setHtml(anleitung.kapitel_html(kid, pfade.TASTE, farben))
+        self.text.verticalScrollBar().setValue(0)
+        i = self._ids.index(kid)
+        self.zurueck.setEnabled(i > 0)
+        self.weiter.setEnabled(i < len(self._ids) - 1)
+        self.position.setText(f"Kapitel {i + 1} von {len(self._ids)}")
+
+    def _blaettern(self, schritt: int) -> None:
+        item = self.inhalt.currentItem()
+        kid = item.data(Qt.UserRole) if item else self._ids[0]
+        ziel = self._ids[max(0, min(len(self._ids) - 1, self._ids.index(kid) + schritt))]
+        self.suche.clear()
+        self.oeffnen(ziel)
+
+    def oeffnen(self, kid: str) -> None:
+        for r in range(self.inhalt.count()):
+            if self.inhalt.item(r).data(Qt.UserRole) == kid:
+                self.inhalt.setCurrentRow(r)
+                return
+
+
 class Watchliste(QListWidget):
     """Watchlist, in der sich die eigenen Werte per Ziehen mit der Maus umsortieren lassen."""
     umsortiert = Signal(list)
@@ -4970,6 +5108,14 @@ class Fenster(QMainWindow):
         suche_k.setToolTip("Schnellsuche: Werte und Befehle")
         suche_k.clicked.connect(self.schnellsuche)
         topbar.addWidget(suche_k)
+        buch = QPushButton(objectName="chip")
+        buch.setIcon(icon("buch", None, 16))
+        buch.setIconSize(QSize(16, 16))
+        buch.setToolTip("Anleitung")
+        buch.setCursor(Qt.PointingHandCursor)
+        buch.clicked.connect(lambda: self.ansicht_setzen(
+            "detail" if self.ansicht == "anleitung" else "anleitung"))
+        topbar.addWidget(buch)
         zahnrad = QPushButton(objectName="chip")
         zahnrad.setIcon(icon("regler", None, 16))
         zahnrad.setIconSize(QSize(16, 16))
@@ -5086,11 +5232,13 @@ class Fenster(QMainWindow):
         self.alarm_seite.alarm_wieder.connect(self.alarm_wieder_an)
         self.markt = MarktSeite()
         self.markt.oeffnen.connect(self.oeffnen)
+        self.anleitung = AnleitungSeite()
         self.home = HomeSeite()
         self.home.oeffnen.connect(self.oeffnen)
         self.home.ansicht.connect(self.ansicht_setzen)
         self._home_zeit = 0.0
         self.seiten = {}
+        self.stapel.addWidget(self.anleitung)
         for name, w in (("depot", self.depot), ("alarme", self.alarm_seite),
                         ("markt", self.markt), ("home", self.home)):
             sc = QScrollArea(objectName="detailscroll")
@@ -5101,11 +5249,14 @@ class Fenster(QMainWindow):
             w.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
             self.stapel.addWidget(sc)
             self.seiten[name] = sc
+        self.seiten["anleitung"] = self.anleitung
         hl.addWidget(self.stapel, 1)
         self.meldung = Meldung(zentral)
         QShortcut(QKeySequence("Ctrl+D"), self, activated=lambda: self.ansicht_setzen(
             "detail" if self.ansicht == "depot" else "depot"))
         QShortcut(QKeySequence("Ctrl+K"), self, activated=self.schnellsuche)
+        QShortcut(QKeySequence.HelpContents, self,
+                  activated=lambda: self.ansicht_setzen("anleitung"))
         QShortcut(QKeySequence("Ctrl+1"), self, activated=lambda: self.ansicht_setzen("home"))
         QShortcut(QKeySequence("Ctrl+J"), self, activated=lambda: self.ansicht_setzen(
             "detail" if self.ansicht == "markt" else "markt"))
@@ -5964,6 +6115,11 @@ class Fenster(QMainWindow):
     def update_zeigen(self) -> None:
         if self.update_info:
             UpdateDialog(self, self.update_info).exec()
+
+    def anleitung_oeffnen(self, kapitel: str = "start") -> None:
+        self.ansicht_setzen("anleitung")
+        self.anleitung.suche.clear()
+        self.anleitung.oeffnen(kapitel)
 
     def schnellsuche(self) -> None:
         if not hasattr(self, "_palette"):

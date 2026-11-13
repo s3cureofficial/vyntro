@@ -60,6 +60,7 @@ jobs:
           --hidden-import app
           --hidden-import update
           --hidden-import tr_import
+          --hidden-import anleitung
           vyntro.py
 
       - name: Selbsttest (startet das gebaute Programm kurz und beendet es)

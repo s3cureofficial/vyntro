@@ -1,6 +1,6 @@
-**Neu in Vyntro 1.1.1**
+**Neu in Vyntro 1.2.0**
 
-- Auf der Home-Seite steht jetzt unten die installierte Versionsnummer – praktisch, um zu sehen, ob ein Update geklappt hat.
+- **Anleitung eingebaut:** Über das Buch-Symbol oben (oder „Neu hier? Anleitung öffnen“ auf Home) erklärt Vyntro, wie Trading funktioniert – Aktien, ETFs, Krypto, Orders, Kosten, Risiko, Steuern – und wie die Signale, Charts, Prognosen und alle Funktionen der App zu lesen sind. Mit Inhaltsverzeichnis und Suche; einzelne Kapitel auch über die Schnellsuche erreichbar.
 
 ---
 
