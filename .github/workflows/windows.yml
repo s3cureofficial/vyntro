@@ -47,7 +47,8 @@ jobs:
           --collect-all curl_cffi
           --collect-submodules websockets
           --hidden-import matplotlib.backends.backend_qtagg
-          app.py
+          --hidden-import app
+          vyntro.py
 
       - name: Selbsttest (startet das gebaute Programm kurz und beendet es)
         shell: pwsh
@@ -56,7 +57,9 @@ jobs:
           $p = Start-Process -FilePath "dist\Vyntro\Vyntro.exe" -ArgumentList "--selbsttest" -PassThru
           $fertig = $p.WaitForExit(120000)
           $log = "$env:APPDATA\Vyntro\selbsttest.txt"
+          $absturz = "$env:APPDATA\Vyntro\absturz.txt"
           if (Test-Path $log) { Write-Host "Protokoll: $(Get-Content $log)" } else { Write-Host "kein Protokoll" }
+          if (Test-Path $absturz) { Write-Host "----- Absturz -----"; Get-Content $absturz | Write-Host }
           if (-not $fertig) {
             Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
             Write-Host "Programm hat sich nicht selbst beendet"

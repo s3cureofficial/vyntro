@@ -58,7 +58,7 @@ Der Installer entsteht automatisch über GitHub Actions
 pip install -r requirements.txt pyinstaller
 pyinstaller --windowed --name Vyntro --icon branding\vyntro.ico ^
   --add-data "branding\vyntro-emblem.png;." --add-data "branding\vyntro-icon-1024.png;." ^
-  --add-data "watchlist.txt;." --collect-all yfinance --collect-all curl_cffi app.py
+  --add-data "watchlist.txt;." --collect-all yfinance --collect-all curl_cffi --hidden-import app vyntro.py
 "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" windows\vyntro.iss
 ```
 
