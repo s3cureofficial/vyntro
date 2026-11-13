@@ -13,6 +13,7 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -48,15 +49,21 @@ jobs:
           --hidden-import matplotlib.backends.backend_qtagg
           app.py
 
-      - name: Selbsttest (startet das gebaute Programm ohne Bildschirm)
+      - name: Selbsttest (startet das gebaute Programm kurz und beendet es)
         shell: pwsh
-        env:
-          QT_QPA_PLATFORM: offscreen
+        timeout-minutes: 5
         run: |
-          $p = Start-Process -FilePath "dist\Vyntro\Vyntro.exe" -ArgumentList "--selbsttest" -PassThru -Wait
+          $p = Start-Process -FilePath "dist\Vyntro\Vyntro.exe" -ArgumentList "--selbsttest" -PassThru
+          $fertig = $p.WaitForExit(120000)
+          $log = "$env:APPDATA\Vyntro\selbsttest.txt"
+          if (Test-Path $log) { Write-Host "Protokoll: $(Get-Content $log)" } else { Write-Host "kein Protokoll" }
+          if (-not $fertig) {
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            Write-Host "Programm hat sich nicht selbst beendet"
+            exit 1
+          }
           Write-Host "Exit-Code: $($p.ExitCode)"
-          Get-Content "$env:APPDATA\Vyntro\selbsttest.txt" -ErrorAction SilentlyContinue
-          if ($p.ExitCode -ne 0) { exit 1 }
+          if (-not ((Test-Path $log) -and ((Get-Content $log) -like "ok*"))) { exit 1 }
 
       - name: Installer bauen (Inno Setup)
         shell: pwsh

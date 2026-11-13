@@ -23,6 +23,7 @@ import yfinance as yf
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 import json
+import os
 import math
 import pickle
 import re
@@ -5966,14 +5967,17 @@ def main() -> int:
     T.update(DUNKEL)
     app.setStyleSheet(qss())
     if "--selbsttest" in sys.argv:  # für den automatischen Build: startet, lädt, beendet
+        protokoll = pfade.DATEN / "selbsttest.txt"
+        protokoll.write_text("gestartet\n")
         fenster = Fenster()
         fenster.show()
+        protokoll.write_text("Fenster gebaut\n")
 
         def ende():
-            n = len(fenster.daten)
-            (pfade.DATEN / "selbsttest.txt").write_text(f"ok {n}\n")
-            app.exit(0)  # gestartet ohne Absturz; Kurse hängen vom Netz ab
-        QTimer.singleShot(40_000, ende)
+            protokoll.write_text(f"ok {len(fenster.daten)} Werte geladen\n")
+            # hart beenden: nicht auf laufende Downloads im Hintergrund warten
+            os._exit(0)
+        QTimer.singleShot(25_000, ende)
         return app.exec()
 
     if "--hintergrund" in sys.argv:  # beim Autostart ohne Fenster und Startbild
