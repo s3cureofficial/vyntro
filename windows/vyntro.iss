@@ -44,6 +44,8 @@ Name: "{autodesktop}\Vyntro"; Filename: "{app}\Vyntro.exe"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\Vyntro.exe"; Description: "Vyntro jetzt starten"; Flags: nowait postinstall skipifsilent
+; nach einem Update aus Vyntro heraus (stille Installation): Vyntro wieder starten
+Filename: "{app}\Vyntro.exe"; Flags: nowait skipifnotsilent
 
 [UninstallRun]
 ; Autostart-Eintrag entfernen, falls er in den Einstellungen eingeschaltet wurde

@@ -11,7 +11,7 @@ APP="$HOME/Applications/Vyntro.app"
 
 mkdir -p "$ZIEL"
 cp "$QUELLE/app.py" "$QUELLE/signale.py" "$QUELLE/begruendung.py" "$QUELLE/prognose.py" \
-   "$QUELLE/nachrichten.py" "$QUELLE/logos.py" "$QUELLE/konto.py" "$QUELLE/pfade.py" "$QUELLE/branding/vyntro-emblem.png" \
+   "$QUELLE/nachrichten.py" "$QUELLE/logos.py" "$QUELLE/konto.py" "$QUELLE/pfade.py" "$QUELLE/tr_import.py" "$QUELLE/update.py" "$QUELLE/version.py" "$QUELLE/requirements.txt" "$QUELLE/branding/vyntro-emblem.png" \
    "$QUELLE/branding/vyntro-icon-1024.png" "$ZIEL/"
 # Watchlist nur beim ersten Mal kopieren, danach gehört sie der App
 [ -f "$ZIEL/watchlist.txt" ] || cp "$QUELLE/watchlist.txt" "$ZIEL/"

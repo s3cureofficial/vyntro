@@ -34,6 +34,9 @@ Startmenü und optional auf dem Desktop.
 - **Alarme:** Kursmarken, Tagesbewegung, RSI, 52-Wochen-Hoch/-Tief, Signalwechsel –
   als Systemmitteilung, auch im Hintergrund
 - **Schnellsuche** (Strg+K / ⌘K), Notizen pro Wert, Autostart, Symbol in Taskleiste/Menüleiste
+- **Trade Republic importieren:** Transaktions-Export (CSV) einlesen, Käufe und Verkäufe
+  werden übernommen
+- **Automatische Updates:** Vyntro meldet neue Versionen und aktualisiert sich auf Knopfdruck
 
 Deine Daten (Listen, Depot, Alarme, Notizen) bleiben auf deinem Rechner:
 Windows `%APPDATA%\Vyntro`, macOS `~/Library/Application Support/Trading-Signale`.
@@ -52,7 +55,8 @@ Legt **Vyntro.app** in `~/Applications` und auf dem Schreibtisch an.
 
 Der Installer entsteht automatisch über GitHub Actions
 ([`.github/workflows/windows.yml`](.github/workflows/windows.yml)), sobald ein Tag wie
-`v1.0.1` gepusht wird. Lokal:
+`v1.1.1` gepusht wird. Die Versionsnummer in `version.py` muss zum Tag passen; was neu ist,
+steht in `NEU.md` und erscheint im Release und im Update-Fenster der App. Lokal:
 
 ```bat
 pip install -r requirements.txt pyinstaller

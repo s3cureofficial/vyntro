@@ -48,6 +48,8 @@ from PySide6.QtWidgets import (
 )
 
 import begruendung
+import update
+import tr_import
 import pfade
 import konto
 import logos
@@ -91,8 +93,9 @@ SORTIERUNGEN = {"eigene": "Eigene Reihenfolge", "name": "Name", "aenderung": "Ta
                 "signal": "Signal"}
 KRYPTO_MUSTER = re.compile(r"-(USD|EUR|USDT|USDC|GBP|CHF|JPY|BTC|ETH)$")
 
-matplotlib.rcParams["font.family"] = ["Helvetica Neue", "Segoe UI", "Helvetica", "Arial",
-                                      "DejaVu Sans"]
+matplotlib.rcParams["font.family"] = (["Helvetica Neue", "Helvetica", "Arial", "DejaVu Sans"]
+                                      if sys.platform == "darwin" else
+                                      ["Segoe UI", "Arial", "DejaVu Sans"])
 
 # ------------------------------------------------------------------ Theme
 
@@ -187,6 +190,21 @@ QDialogButtonBox QPushButton:hover { background: @feldhover; }
 QDialogButtonBox QPushButton:default { background: @akzent; color: #050505; border: none; }
 QDialogButtonBox QPushButton:disabled { color: @leise; background: @feld; }
 QFrame#depotzeile { background: transparent; border-radius: 8px; }
+QPushButton#update {
+  background: rgba(25,230,162,22); color: #19e6a2; border: 1px solid rgba(25,230,162,90);
+  border-radius: 8px; padding: 6px 12px; font-size: 12px; font-weight: 600;
+}
+QPushButton#update:hover { background: rgba(25,230,162,40); }
+QPushButton#updatejetzt {
+  background: #19e6a2; color: #050505; border: none; border-radius: 8px; padding: 8px 16px;
+  font-size: 13px; font-weight: 600;
+}
+QPushButton#updatejetzt:disabled { background: @feld; color: @leise; }
+QProgressBar#updatebalken { background: @feld; border: none; border-radius: 3px; max-height: 6px; }
+QProgressBar#updatebalken::chunk {
+  border-radius: 3px;
+  background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 rgba(25,230,162,120), stop:1 #19e6a2);
+}
 QFrame#homekachel {
   background: @karte; border: 1px solid @rand; border-top-color: @glanz; border-radius: 12px;
 }
@@ -789,6 +807,8 @@ ICON_FORMEN = {
               '<rect x="13" y="13" width="7" height="7" rx="1.6"/>',
     "suche": '<circle cx="10.8" cy="10.8" r="6.3"/><path d="M15.5 15.5L20 20"/>',
     "haus": '<path d="M4 10.8L12 4.5l8 6.3V19a1.2 1.2 0 0 1-1.2 1.2H15v-5.4h-6v5.4H5.2A1.2 1.2 0 0 1 4 19z"/>',
+    "import": '<path d="M12 4v11"/><path d="M7.5 10.5L12 15l4.5-4.5"/>'
+              '<path d="M5 14.5v3.3A2.2 2.2 0 0 0 7.2 20h9.6a2.2 2.2 0 0 0 2.2-2.2v-3.3"/>',
     "funke": '<path d="M12 3.5c.6 4.3 2.2 5.9 6.5 6.5-4.3.6-5.9 2.2-6.5 6.5-.6-4.3-2.2-5.9'
              '-6.5-6.5 4.3-.6 5.9-2.2 6.5-6.5z"/><path d="M18.5 15.5v4M16.5 17.5h4"/>',
 }
@@ -2696,6 +2716,7 @@ class DepotSeite(QWidget):
     Positionen und Dividenden."""
     oeffnen = Signal(str)
     export_gewuenscht = Signal()
+    import_gewuenscht = Signal()
     VERGLEICH = "EUNL.DE"  # iShares Core MSCI World
 
     def __init__(self):
@@ -2710,6 +2731,13 @@ class DepotSeite(QWidget):
         titel = QHBoxLayout()
         titel.addWidget(label("Mein Depot", "kartentitel"))
         titel.addStretch()
+        importieren = QPushButton(" Trade Republic importieren", objectName="chip")
+        importieren.setIcon(icon("import", None, 14))
+        importieren.setCursor(Qt.PointingHandCursor)
+        importieren.setToolTip("Käufe und Verkäufe aus dem CSV-Export von Trade Republic "
+                               "übernehmen (Profil → Transaktionen exportieren)")
+        importieren.clicked.connect(self.import_gewuenscht)
+        titel.addWidget(importieren)
         export = QPushButton(" Als CSV exportieren", objectName="chip")
         export.setIcon(icon("export", None, 14))
         export.setCursor(Qt.PointingHandCursor)
@@ -3652,6 +3680,8 @@ class EinstellungenDialog(QDialog):
         zeile.addStretch()
         lay.addLayout(zeile)
 
+        lay.addSpacing(6)
+        lay.addWidget(label(f"Vyntro {update.VERSION}", "klein"))
         knoepfe = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         knoepfe.button(QDialogButtonBox.Save).setText("Speichern")
         knoepfe.button(QDialogButtonBox.Cancel).setText("Abbrechen")
@@ -4137,7 +4167,8 @@ class Schnellsuche(QDialog):
              ("glocke", "Alle Alarme", lambda: f.ansicht_setzen("alarme")),
              ("regler", "Einstellungen", f.einstellungen_oeffnen),
              ("neu", "Alle Kurse neu laden", f.alle_laden),
-             ("funke", "Neue Liste anlegen", f.liste_neu)]
+             ("funke", "Neue Liste anlegen", f.liste_neu),
+             ("import", "Trade Republic importieren", f.depot_importieren)]
         t = f.detail.ticker
         if t and f.ansicht == "detail":
             b += [("plus", f"Kauf / Verkauf eintragen: {t}", lambda: f.kauf_eintragen(t)),
@@ -4515,6 +4546,307 @@ class HomeSeite(QWidget):
             self.termin_box.addWidget(z)
 
 
+class _TickerSignale(QObject):
+    gefunden = Signal(str, str)
+    fertig = Signal()
+
+
+class TickerSuche(QRunnable):
+    """Sucht im Hintergrund die Yahoo-Ticker zu allen ISINs eines Imports."""
+
+    def __init__(self, werte: list[tuple[str, str, bool]]):
+        super().__init__()
+        self.werte = werte
+        self.signale = _TickerSignale()
+
+    def run(self) -> None:
+        for isin, name, krypto in self.werte:
+            try:
+                t = tr_import.ticker_finden(isin, name, krypto) or ""
+            except Exception:  # noqa: BLE001
+                t = ""
+            try:
+                self.signale.gefunden.emit(isin, t)
+            except RuntimeError:
+                return
+        try:
+            self.signale.fertig.emit()
+        except RuntimeError:
+            pass
+
+
+class ImportDialog(QDialog):
+    """Vorschau der Käufe/Verkäufe aus der Trade-Republic-CSV, Ticker korrigierbar."""
+
+    def __init__(self, parent, buchungen: list[dict], vorhanden: set[str]):
+        super().__init__(parent)
+        self.setWindowTitle("Trade Republic importieren")
+        self.setMinimumSize(900, 600)
+        self.buchungen = buchungen
+        self.vorhanden = vorhanden
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(24, 22, 24, 20)
+        lay.setSpacing(10)
+        lay.addWidget(label("Trade Republic importieren", "kartentitel"))
+        neu = sum(1 for b in buchungen if b["tr_id"] not in vorhanden)
+        info = label(f"{len(buchungen)} Käufe und Verkäufe gefunden, davon {neu} neu. "
+                     "Schon importierte Buchungen werden übersprungen. Einzahlungen, Zinsen und "
+                     "Dividenden werden nicht übernommen.", "leise")
+        info.setWordWrap(True)
+        lay.addWidget(info)
+        self.status = label("Suche passende Ticker bei Yahoo Finance …", "klein")
+        lay.addWidget(self.status)
+
+        self.isins = list(dict.fromkeys(b["isin"] for b in buchungen))
+        self.werte_tabelle = QTableWidget(len(self.isins), 4, objectName="tabelle")
+        self.werte_tabelle.setHorizontalHeaderLabels(["Wertpapier", "ISIN", "Ticker (änderbar)",
+                                                      "Buchungen"])
+        self.werte_tabelle.verticalHeader().setVisible(False)
+        self.werte_tabelle.setShowGrid(False)
+        kopf = self.werte_tabelle.horizontalHeader()
+        kopf.setSectionResizeMode(QHeaderView.ResizeToContents)
+        kopf.setSectionResizeMode(0, QHeaderView.Stretch)
+        for r, isin in enumerate(self.isins):
+            b = next(x for x in buchungen if x["isin"] == isin)
+            n = sum(1 for x in buchungen if x["isin"] == isin)
+            for c, text in enumerate((b["name"], isin, "…", f"{n}")):
+                it = QTableWidgetItem(text)
+                if c != 2:
+                    it.setFlags(it.flags() & ~Qt.ItemIsEditable)
+                self.werte_tabelle.setItem(r, c, it)
+            self.werte_tabelle.setRowHeight(r, 32)
+        lay.addWidget(label("Wertpapiere", "h2"))
+        lay.addWidget(self.werte_tabelle, 2)
+
+        lay.addWidget(label("Buchungen", "h2"))
+        self.tabelle = QTableWidget(len(buchungen), 6, objectName="tabelle")
+        self.tabelle.setHorizontalHeaderLabels(["Datum", "Art", "Wertpapier", "Stück",
+                                                "Kurs €", "Gebühr €"])
+        self.tabelle.verticalHeader().setVisible(False)
+        self.tabelle.setShowGrid(False)
+        self.tabelle.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        kopf = self.tabelle.horizontalHeader()
+        kopf.setSectionResizeMode(QHeaderView.ResizeToContents)
+        kopf.setSectionResizeMode(2, QHeaderView.Stretch)
+        for r, b in enumerate(buchungen):
+            alt = b["tr_id"] in vorhanden
+            vk = b["art"] == "verkauf"
+            zellen = [datetime.strptime(b["datum"], "%Y-%m-%d").strftime("%d.%m.%Y"),
+                      "Verkauf" if vk else "Kauf", b["name"],
+                      zahl(b["stueck"], 6).rstrip("0").rstrip(","), kurs_text(b["kurs_eur"]),
+                      zahl(b["gebuehr_eur"], 2)]
+            for c, text in enumerate(zellen):
+                it = QTableWidgetItem(text + ("  · schon importiert" if alt and c == 2 else ""))
+                if c >= 3:
+                    it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                if alt:
+                    it.setForeground(QColor(T["leise"]))
+                elif c == 1:
+                    it.setForeground(QColor(T["rot"] if vk else T["gruen"]))
+                self.tabelle.setItem(r, c, it)
+            self.tabelle.setRowHeight(r, 30)
+        lay.addWidget(self.tabelle, 3)
+
+        knoepfe = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.ok = knoepfe.button(QDialogButtonBox.Ok)
+        self.ok.setText(f"{neu} Buchungen übernehmen")
+        self.ok.setEnabled(False)
+        knoepfe.button(QDialogButtonBox.Cancel).setText("Abbrechen")
+        knoepfe.accepted.connect(self.accept)
+        knoepfe.rejected.connect(self.reject)
+        lay.addWidget(knoepfe)
+        if not neu:
+            self.ok.setText("Nichts Neues")
+
+        werte = [(isin, next(x["name"] for x in buchungen if x["isin"] == isin),
+                  next(x["krypto"] for x in buchungen if x["isin"] == isin))
+                 for isin in self.isins]
+        self.suche = TickerSuche(werte)
+        self.suche.signale.gefunden.connect(self._gefunden)
+        self.suche.signale.fertig.connect(self._fertig)
+        QThreadPool.globalInstance().start(self.suche)
+
+    def _gefunden(self, isin: str, ticker: str) -> None:
+        r = self.isins.index(isin)
+        it = self.werte_tabelle.item(r, 2)
+        it.setText(ticker)
+        if not ticker:
+            it.setText("")
+            it.setToolTip("Nicht gefunden – bitte den Yahoo-Ticker eintragen, z. B. SAP.DE")
+
+    def _fertig(self) -> None:
+        offen = sum(1 for r in range(len(self.isins))
+                    if not self.werte_tabelle.item(r, 2).text().strip())
+        self.status.setText("Ticker gefunden. Du kannst sie in der Tabelle noch ändern."
+                            if not offen else f"{offen} Ticker nicht gefunden – bitte eintragen "
+                                              "(Yahoo-Schreibweise, z. B. SAP.DE).")
+        neu = sum(1 for b in self.buchungen if b["tr_id"] not in self.vorhanden)
+        self.ok.setEnabled(neu > 0)
+
+    def ergebnis(self) -> tuple[list[dict], dict[str, str]]:
+        zuordnung = {isin: self.werte_tabelle.item(r, 2).text().strip().upper()
+                     for r, isin in enumerate(self.isins)}
+        neu = []
+        for b in self.buchungen:
+            t = zuordnung.get(b["isin"])
+            if b["tr_id"] in self.vorhanden or not t:
+                continue
+            k = konto.kauf(t, b["stueck"], b["kurs_eur"], b["gebuehr_eur"], b["datum"], b["art"])
+            k["tr_id"] = b["tr_id"]
+            neu.append(k)
+        return neu, zuordnung
+
+
+class _UpdateSignale(QObject):
+    gefunden = Signal(object)
+    fortschritt = Signal(float, str)
+    fertig = Signal(str)
+    fehler = Signal(str)
+
+
+class UpdatePruefung(QRunnable):
+    """Fragt GitHub nach der neuesten Version (im Hintergrund)."""
+
+    def __init__(self):
+        super().__init__()
+        self.signale = _UpdateSignale()
+
+    def run(self) -> None:
+        try:
+            info = update.neueste()
+        except Exception:  # noqa: BLE001 – offline o. Ä.: einfach nichts anzeigen
+            info = None
+        try:
+            self.signale.gefunden.emit(info)
+        except RuntimeError:
+            pass
+
+
+class UpdateJob(QRunnable):
+    """Lädt das Update herunter und bereitet die Installation vor."""
+
+    def __init__(self, info: dict):
+        super().__init__()
+        self.info = info
+        self.signale = _UpdateSignale()
+
+    def run(self) -> None:
+        def melden(anteil: float, text: str) -> None:
+            try:
+                self.signale.fortschritt.emit(anteil, text)
+            except RuntimeError:
+                pass
+        try:
+            ordner = update.temp_ordner()
+            if update.art() == "windows":
+                ziel = ordner / f"Vyntro-Setup-{self.info['version']}.exe"
+                update.herunterladen(self.info["installer"], ziel,
+                                     lambda a, t: melden(a * 0.95, t))
+                melden(0.97, "Starte Installation …")
+            else:
+                ziel = ordner / f"vyntro-{self.info['version']}.zip"
+                update.herunterladen(self.info["quelle"], ziel, lambda a, t: melden(a * 0.88, t))
+                melden(0.9, "Installiere …")
+                update.mac_installieren(ziel, melden)
+                melden(1.0, "Fertig – Vyntro startet neu …")
+            self.signale.fertig.emit(str(ziel))
+        except Exception as e:  # noqa: BLE001
+            try:
+                self.signale.fehler.emit(str(e) or e.__class__.__name__)
+            except RuntimeError:
+                pass
+
+
+class UpdateDialog(QDialog):
+    """Kleines Fenster: was ist neu, Knopf zum Aktualisieren, Fortschritt."""
+
+    def __init__(self, parent: "Fenster", info: dict):
+        super().__init__(parent)
+        self.f = parent
+        self.info = info
+        self.setWindowTitle("Vyntro aktualisieren")
+        self.setFixedWidth(500)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(26, 24, 26, 22)
+        lay.setSpacing(10)
+        kopf = QHBoxLayout()
+        kopf.setSpacing(14)
+        if LOGO_DATEI.exists():
+            logo = QLabel()
+            logo.setPixmap(logo_pixmap(30))
+            kopf.addWidget(logo)
+        titel = QVBoxLayout()
+        titel.setSpacing(0)
+        titel.addWidget(label(f"Vyntro {info['version']} ist da", "kartentitel"))
+        titel.addWidget(label(f"Du nutzt Version {update.VERSION}", "klein"))
+        kopf.addLayout(titel, 1)
+        lay.addLayout(kopf)
+        notizen = info.get("notizen", "").split("---")[0].strip()  # nur „Was ist neu“
+        self.notizen = QLabel(notizen[:900] or "Verbesserungen und Fehlerbehebungen.")
+        self.notizen.setTextFormat(Qt.MarkdownText)
+        self.notizen.setWordWrap(True)
+        self.notizen.setStyleSheet(f"color: {T['leise']}; font-size: 12px;")
+        lay.addWidget(self.notizen)
+        lay.addSpacing(6)
+        self.balken = QProgressBar(objectName="updatebalken")
+        self.balken.setRange(0, 1000)
+        self.balken.setTextVisible(False)
+        self.balken.hide()
+        lay.addWidget(self.balken)
+        self.status = label("", "klein")
+        self.status.hide()
+        lay.addWidget(self.status)
+        knoepfe = QHBoxLayout()
+        knoepfe.addStretch()
+        self.spaeter = QPushButton("Später", objectName="chip")
+        self.spaeter.clicked.connect(self.reject)
+        self.los = QPushButton("  Jetzt aktualisieren", objectName="updatejetzt")
+        self.los.setIcon(icon("import", "#050505", 15))
+        self.los.setCursor(Qt.PointingHandCursor)
+        self.los.clicked.connect(self.starten)
+        knoepfe.addWidget(self.spaeter)
+        knoepfe.addWidget(self.los)
+        lay.addLayout(knoepfe)
+        if not update.art():
+            self.los.setEnabled(False)
+            self.status.setText("Diese Installation kann sich nicht selbst aktualisieren "
+                                "(Entwicklerversion). Bitte mit „git pull“ und install.sh.")
+            self.status.show()
+
+    def starten(self) -> None:
+        self.los.setEnabled(False)
+        self.spaeter.setEnabled(False)
+        self.balken.show()
+        self.status.show()
+        self.status.setText("Verbinde …")
+        job = UpdateJob(self.info)
+        job.signale.fortschritt.connect(self._fortschritt)
+        job.signale.fertig.connect(self._fertig)
+        job.signale.fehler.connect(self._fehler)
+        QThreadPool.globalInstance().start(job)
+
+    def _fortschritt(self, anteil: float, text: str) -> None:
+        self.balken.setValue(int(anteil * 1000))
+        self.status.setText(f"{text}   {int(anteil * 100)} %")
+
+    def _fertig(self, pfad: str) -> None:
+        self.balken.setValue(1000)
+        if update.art() == "windows":
+            self.status.setText("Installiere … Vyntro schließt sich kurz und startet neu.")
+            update.installer_starten(s.Path(pfad))
+        else:
+            self.status.setText("Fertig – Vyntro startet neu …")
+            update.neu_starten_mac()
+        QTimer.singleShot(1200, self.f.beenden)
+
+    def _fehler(self, text: str) -> None:
+        self.status.setText(f"Update fehlgeschlagen: {text}")
+        self.status.setStyleSheet(f"color: {T['rot']};")
+        self.los.setEnabled(True)
+        self.los.setText("  Erneut versuchen")
+        self.spaeter.setEnabled(True)
+
+
 class Watchliste(QListWidget):
     """Watchlist, in der sich die eigenen Werte per Ziehen mit der Maus umsortieren lassen."""
     umsortiert = Signal(list)
@@ -4624,6 +4956,12 @@ class Fenster(QMainWindow):
         self.k_depot.setToolTip(f"Deine eingetragenen Käufe mit Gewinn/Verlust ({pfade.TASTE}D)")
         self.k_alarme.setToolTip(f"Kurs- und Signal-Alarme ({pfade.TASTE}L)")
         topbar.addSpacing(6)
+        self.update_knopf = QPushButton(objectName="update")
+        self.update_knopf.setCursor(Qt.PointingHandCursor)
+        self.update_knopf.hide()
+        self.update_knopf.clicked.connect(self.update_zeigen)
+        topbar.addWidget(self.update_knopf)
+        self.update_info: dict | None = None
         self.status = QLabel(objectName="statuschip")
         topbar.addWidget(self.status)
         suche_k = QPushButton(f"  Suchen   {pfade.TASTE}K", objectName="chip")
@@ -4740,6 +5078,7 @@ class Fenster(QMainWindow):
         self.depot = DepotSeite()
         self.depot.oeffnen.connect(self.oeffnen)
         self.depot.export_gewuenscht.connect(self.depot_exportieren)
+        self.depot.import_gewuenscht.connect(self.depot_importieren)
         self.depot.freibetrag = self.einstellungen.value("freibetrag", 1000.0, type=float)
         self.alarm_seite = AlarmSeite()
         self.alarm_seite.oeffnen.connect(self.oeffnen)
@@ -4775,6 +5114,10 @@ class Fenster(QMainWindow):
         self.knoepfe_beschriften()
         self.wirklich_beenden = False
         self.offline = False
+        QTimer.singleShot(5000, self.update_pruefen)  # beim Start nach neuer Version schauen
+        self.update_timer = QTimer(self, interval=6 * 3600 * 1000)
+        self.update_timer.timeout.connect(self.update_pruefen)
+        self.update_timer.start()
         QApplication.instance().installEventFilter(QuitWaechter(self))
         QApplication.instance().setQuitOnLastWindowClosed(False)
         QApplication.instance().applicationStateChanged.connect(self._app_zustand)
@@ -5598,6 +5941,30 @@ class Fenster(QMainWindow):
                 self.laden(ticker)
             self.auswahl_geaendert()
 
+    def update_pruefen(self) -> None:
+        job = UpdatePruefung()
+        job.signale.gefunden.connect(self._update_gefunden)
+        self.pool.start(job)
+
+    def _update_gefunden(self, info) -> None:
+        if not info or not info.get("version") or not update.ist_neuer(info["version"]):
+            return
+        if update.art() == "windows" and not info.get("installer"):
+            return  # Release ohne Installer (wird gerade noch gebaut)
+        neu = self.update_info is None or self.update_info["version"] != info["version"]
+        self.update_info = info
+        self.update_knopf.setText(f"  Neue Version {info['version']}")
+        self.update_knopf.setIcon(icon("import", "#19e6a2", 14))
+        self.update_knopf.setToolTip("Jetzt aktualisieren")
+        self.update_knopf.show()
+        if neu:
+            self.meldung.zeige(f"Vyntro {info['version']} ist verfügbar",
+                               "Klick oben auf „Neue Version“, um zu aktualisieren.")
+
+    def update_zeigen(self) -> None:
+        if self.update_info:
+            UpdateDialog(self, self.update_info).exec()
+
     def schnellsuche(self) -> None:
         if not hasattr(self, "_palette"):
             self._palette = Schnellsuche(self)
@@ -5612,6 +5979,38 @@ class Fenster(QMainWindow):
     def notiz_speichern(self, ticker: str, text: str) -> None:
         self.notizen[ticker] = text
         konto.speichere_notizen(self.notizen)
+
+    def depot_importieren(self, datei: str | None = None) -> None:
+        if not datei:
+            datei, _ = QFileDialog.getOpenFileName(
+                self, "Trade-Republic-Export wählen", str(s.Path.home() / "Downloads"),
+                "CSV-Dateien (*.csv)")
+        if not datei:
+            return
+        try:
+            buchungen = tr_import.lesen(s.Path(datei))
+        except (OSError, ValueError, UnicodeDecodeError) as fehler:
+            self.meldung.zeige("Import nicht möglich", str(fehler))
+            return
+        if not buchungen:
+            self.meldung.zeige("Nichts zu importieren",
+                               "In der Datei stehen keine Käufe oder Verkäufe.")
+            return
+        vorhanden = {k.get("tr_id") for k in self.kaeufe if k.get("tr_id")}
+        dlg = ImportDialog(self, buchungen, vorhanden)
+        self._import_dialog = dlg
+        if dlg.exec() != QDialog.Accepted:
+            return
+        neu, zuordnung = dlg.ergebnis()
+        tr_import.zuordnung_merken(zuordnung)
+        self.kaeufe.extend(neu)
+        self.konto_geaendert()
+        for t in {k["ticker"] for k in neu}:
+            if t not in self.daten:
+                self.laden(t)
+        self.meldung.zeige("Import fertig", f"{len(neu)} Buchungen aus Trade Republic "
+                                            "übernommen.")
+        self.ansicht_setzen("depot")
 
     def depot_exportieren(self) -> None:
         vorschlag = str(s.Path.home() / "Downloads" / f"Vyntro-Depot-{datetime.now():%Y-%m-%d}.csv")

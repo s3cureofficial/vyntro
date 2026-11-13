@@ -36,6 +36,15 @@ jobs:
             echo "version=0.0.0-test" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Version im Code prüfen
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          code=$(python -c "from version import VERSION; print(VERSION)")
+          if [ "$code" != "${{ steps.version.outputs.version }}" ]; then
+            echo "version.py ($code) passt nicht zum Tag (${{ steps.version.outputs.version }})"; exit 1
+          fi
+
       - name: Programm bauen (PyInstaller)
         run: >
           pyinstaller --noconfirm --clean --windowed --name Vyntro
@@ -49,6 +58,8 @@ jobs:
           --collect-submodules numpy
           --hidden-import matplotlib.backends.backend_qtagg
           --hidden-import app
+          --hidden-import update
+          --hidden-import tr_import
           vyntro.py
 
       - name: Selbsttest (startet das gebaute Programm kurz und beendet es)
@@ -86,10 +97,4 @@ jobs:
         with:
           name: Vyntro ${{ steps.version.outputs.version }}
           files: installer/*.exe
-          body: |
-            **Windows:** `Vyntro-Setup-${{ steps.version.outputs.version }}.exe` herunterladen und ausführen.
-
-            Der Installer ist nicht signiert. Windows zeigt deshalb beim ersten Start eventuell
-            „Der Computer wurde durch Windows geschützt“ – dann auf **Weitere Informationen → Trotzdem ausführen** klicken.
-
-            Keine Anlageberatung. Die Signale folgen festen Regeln aus Kursdaten (Yahoo Finance).
+          body_path: NEU.md
