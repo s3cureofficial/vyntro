@@ -1,0 +1,6 @@
+# Ein Ticker pro Zeile (Yahoo-Finance-Schreibweise). Kommentare mit #.
+AAPL
+SAP.DE
+EUNL.DE
+BTC-USD
+ETH-USD

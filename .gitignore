@@ -1,0 +1,26 @@
+# Python / Build
+__pycache__/
+*.pyc
+.venv/
+build/
+dist/
+installer/
+*.spec
+
+# persönliche Daten und Zwischenspeicher (liegen nie im Repository)
+app.log
+logos/
+cache/
+meine.txt
+listen.json
+depot.json
+alarme.json
+notizen.json
+selbsttest.txt
+*.tmp
+
+# alte bzw. fremde Logo-Entwürfe
+branding/aurum-*
+branding/Aurum.icns
+branding/vyntro-vorlage.webp
+.DS_Store

@@ -1,0 +1,84 @@
+name: Windows-Installer
+
+# Baut Vyntro für Windows und hängt den Installer an ein GitHub-Release.
+# Auslöser: ein Tag wie v1.0.0 – oder manuell über „Run workflow“.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Abhängigkeiten installieren
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller==6.11.1
+
+      - name: Version bestimmen
+        id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-test" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Programm bauen (PyInstaller)
+        run: >
+          pyinstaller --noconfirm --clean --windowed --name Vyntro
+          --icon branding/vyntro.ico
+          --add-data "branding/vyntro-emblem.png;."
+          --add-data "branding/vyntro-icon-1024.png;."
+          --add-data "watchlist.txt;."
+          --collect-all yfinance
+          --collect-all curl_cffi
+          --collect-submodules websockets
+          --hidden-import matplotlib.backends.backend_qtagg
+          app.py
+
+      - name: Selbsttest (startet das gebaute Programm ohne Bildschirm)
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $p = Start-Process -FilePath "dist\Vyntro\Vyntro.exe" -ArgumentList "--selbsttest" -PassThru -Wait
+          Write-Host "Exit-Code: $($p.ExitCode)"
+          Get-Content "$env:APPDATA\Vyntro\selbsttest.txt" -ErrorAction SilentlyContinue
+          if ($p.ExitCode -ne 0) { exit 1 }
+
+      - name: Installer bauen (Inno Setup)
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DVersion=${{ steps.version.outputs.version }}" windows\vyntro.iss
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Vyntro-Setup
+          path: installer/*.exe
+
+      - name: Release mit Installer veröffentlichen
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Vyntro ${{ steps.version.outputs.version }}
+          files: installer/*.exe
+          body: |
+            **Windows:** `Vyntro-Setup-${{ steps.version.outputs.version }}.exe` herunterladen und ausführen.
+
+            Der Installer ist nicht signiert. Windows zeigt deshalb beim ersten Start eventuell
+            „Der Computer wurde durch Windows geschützt“ – dann auf **Weitere Informationen → Trotzdem ausführen** klicken.
+
+            Keine Anlageberatung. Die Signale folgen festen Regeln aus Kursdaten (Yahoo Finance).
