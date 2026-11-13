@@ -4356,8 +4356,8 @@ class HomeSeite(QWidget):
         b.setCursor(Qt.PointingHandCursor)
         b.clicked.connect(lambda: self.ansicht.emit("markt"))
         sk.addWidget(b)
-        fuss = label("Signale folgen festen Regeln aus Kursdaten · keine Anlageberatung · "
-                     "Daten: Yahoo Finance", "klein")
+        fuss = label(f"Vyntro {update.VERSION} · Signale folgen festen Regeln aus Kursdaten · "
+                     "keine Anlageberatung · Daten: Yahoo Finance", "klein")
         fuss.setAlignment(Qt.AlignCenter)
         lay.addWidget(fuss)
         lay.addStretch()

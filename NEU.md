@@ -1,7 +1,6 @@
-**Neu in Vyntro 1.1.0**
+**Neu in Vyntro 1.1.1**
 
-- **Trade Republic importieren:** Den Transaktions-Export (CSV) im Depot einlesen – Käufe und Verkäufe werden mit Gebühren übernommen, die passenden Ticker automatisch gefunden. Mehrfaches Importieren legt nichts doppelt an.
-- **Automatische Updates:** Vyntro prüft beim Start, ob es eine neue Version gibt, und aktualisiert sich auf Knopfdruck – mit Fortschrittsanzeige.
+- Auf der Home-Seite steht jetzt unten die installierte Versionsnummer – praktisch, um zu sehen, ob ein Update geklappt hat.
 
 ---
 
