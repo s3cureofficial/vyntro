@@ -1,6 +1,8 @@
-**Neu in Vyntro 1.2.0**
+**Neu in Vyntro 1.3.0**
 
-- **Anleitung eingebaut:** Über das Buch-Symbol oben (oder „Neu hier? Anleitung öffnen“ auf Home) erklärt Vyntro, wie Trading funktioniert – Aktien, ETFs, Krypto, Orders, Kosten, Risiko, Steuern – und wie die Signale, Charts, Prognosen und alle Funktionen der App zu lesen sind. Mit Inhaltsverzeichnis und Suche; einzelne Kapitel auch über die Schnellsuche erreichbar.
+- **Chart-Kurs in der Anleitung:** Elf kurze Lektionen zeigen, wie man Charts liest und Muster erkennt – Kerzen und Kerzenmuster, Trends und Trendlinien, Unterstützung und Widerstand, gleitende Durchschnitte, Volumen, RSI, MACD und Bollinger (inklusive Divergenzen), Doppelboden, Schulter-Kopf-Schulter, Flaggen, Dreiecke und Kurslücken. Mit Lehrbildern, Merksätzen, typischen Fallen, Chance-Risiko-Verhältnis und einer Übung mit Auflösung zum Schluss.
+- **Fachbegriffe A–Z:** Glossar mit rund 60 Begriffen, jeweils mit Link zur passenden Lektion.
+- **Anleitung übersichtlicher:** Wichtiges ist fett und in Mint hervorgehoben, Hinweise stehen in farbigen Kästen (Merke, Vorsicht, So siehst du es in Vyntro), Kapitel sind untereinander verlinkt.
 
 ---
 

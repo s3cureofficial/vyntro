@@ -37,6 +37,9 @@ Startmenü und optional auf dem Desktop.
 - **Trade Republic importieren:** Transaktions-Export (CSV) einlesen, Käufe und Verkäufe
   werden übernommen
 - **Automatische Updates:** Vyntro meldet neue Versionen und aktualisiert sich auf Knopfdruck
+- **Anleitung mit Chart-Kurs:** Trading-Grundlagen, ein Mini-Kurs in elf Lektionen (Kerzen,
+  Trends, Unterstützung/Widerstand, Indikatoren, Chartformationen – mit Bildern und Übung),
+  Fachbegriffe A–Z und eine Erklärung jeder Funktion
 
 Deine Daten (Listen, Depot, Alarme, Notizen) bleiben auf deinem Rechner:
 Windows `%APPDATA%\Vyntro`, macOS `~/Library/Application Support/Trading-Signale`.

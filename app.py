@@ -34,10 +34,10 @@ import time
 
 from PySide6.QtCore import (
     QByteArray, QDate, QEasingCurve, QEvent, QObject, QPointF, QRectF, QRunnable, QSettings, QSize, Qt, QThreadPool, QTimer,
-    QVariantAnimation, Signal,
+    QUrl, QVariantAnimation, Signal,
 )
 from PySide6.QtGui import (
-    QAction, QBrush, QFont, QIcon, QLinearGradient, QPainter, QRadialGradient, QPainterPath, QPen, QPalette, QPixmap, QRadialGradient, QColor, QFontMetrics, QKeySequence, QShortcut, QStandardItem, QStandardItemModel,
+    QAction, QBrush, QDesktopServices, QFont, QIcon, QImage, QLinearGradient, QPainter, QRadialGradient, QPainterPath, QPen, QPalette, QPixmap, QRadialGradient, QColor, QFontMetrics, QKeySequence, QShortcut, QStandardItem, QStandardItemModel,
 )
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
@@ -4862,6 +4862,37 @@ class UpdateDialog(QDialog):
         self.spaeter.setEnabled(True)
 
 
+class AnleitungText(QTextBrowser):
+    """Textfeld der Anleitung, das die Lehrbilder des Chart-Kurses selbst zeichnet.
+
+    Bilder stehen im HTML als kurs:NAME?b=BREITE und werden von kursbilder.py (matplotlib)
+    erzeugt, einmal pro Name zwischengespeichert und passend zur Breite und
+    Bildschirmauflösung verkleinert.
+    """
+
+    def __init__(self):
+        super().__init__(objectName="anleitung")
+        self._roh: dict[str, QImage] = {}
+
+    def loadResource(self, typ, url):
+        if url.scheme() == "kurs":
+            name = url.path()
+            try:
+                breite = int(url.query().partition("b=")[2] or 600)
+                if name not in self._roh:
+                    import kursbilder
+                    self._roh[name] = QImage.fromData(kursbilder.png(name))
+                roh = self._roh[name]
+                dpr = max(1.0, self.devicePixelRatioF())
+                bild = roh.scaledToWidth(min(roh.width(), round(breite * dpr)),
+                                         Qt.SmoothTransformation)
+                bild.setDevicePixelRatio(dpr)
+                return bild
+            except Exception:  # noqa: BLE001 – ein fehlendes Bild soll die Anleitung nicht stören
+                return QImage()
+        return super().loadResource(typ, url)
+
+
 class AnleitungSeite(QWidget):
     """Eingebaute Anleitung: Inhaltsverzeichnis mit Suche links, Kapitel rechts."""
 
@@ -4895,15 +4926,25 @@ class AnleitungSeite(QWidget):
         rl = QVBoxLayout(rechts)
         rl.setContentsMargins(34, 26, 34, 18)
         rl.setSpacing(10)
-        self.text = QTextBrowser(objectName="anleitung")
-        self.text.setOpenExternalLinks(True)
+        self.text = AnleitungText()
+        self.text.setOpenLinks(False)
+        self.text.anchorClicked.connect(self._link)
         self.text.document().setDocumentMargin(0)
         self.text.document().setDefaultStyleSheet(
-            f"h1 {{ font-size: 24px; font-weight: 500; margin-bottom: 10px; }}"
+            f"h1 {{ font-size: 24px; font-weight: 500; margin-top: 2px; margin-bottom: 10px; }}"
             f"h3 {{ font-size: 15px; font-weight: 600; margin-top: 18px; margin-bottom: 4px; }}"
             f"p, li, td {{ font-size: 14px; line-height: 150%; color: {T['text']}; }}"
+            f"b {{ color: {GOLD}; font-weight: 600; }}"
             f"i {{ color: {T['leise']}; }}"
-            f"a {{ color: {GOLD}; }}")
+            f"a {{ color: {GOLD}; }}"
+            f".kicker {{ font-size: 11px; font-weight: 700; letter-spacing: 1.6px; "
+            f"color: {GOLD}; margin-bottom: 0px; }}"
+            f".lead {{ font-size: 15px; color: {T['leise']}; margin-bottom: 8px; }}"
+            f".bild {{ font-size: 12px; color: {T['leise']}; margin-top: 2px; }}"
+            f".bildzeile {{ line-height: 100%; margin-top: 10px; margin-bottom: 0px; }}"
+            f".kastentitel {{ font-size: 10px; font-weight: 700; letter-spacing: 1.6px; "
+            f"margin-bottom: 4px; }}"
+            f".weiter {{ font-size: 14px; color: {T['leise']}; }}")
         rl.addWidget(self.text, 1)
         unten = QHBoxLayout()
         self.zurueck = QPushButton("←  Zurück", objectName="chip")
@@ -4921,7 +4962,51 @@ class AnleitungSeite(QWidget):
         rl.addLayout(unten)
         lay.addWidget(rechts, 1)
         self._ids = [k[0] for k in anleitung.KAPITEL]
+        self._kapitel: str | None = None
+        self._loesung = False  # Auflösung der Übung sichtbar?
+        self._breite = 0  # Bildbreite, mit der das aktuelle Kapitel gezeichnet wurde
+        # Bilder an neue Fensterbreite anpassen, aber nicht bei jedem Pixel neu zeichnen
+        self._groesse_timer = QTimer(self, singleShot=True, interval=150)
+        self._groesse_timer.timeout.connect(self._breite_pruefen)
+        self.text.viewport().installEventFilter(self)
         self._filtern("")
+
+    def eventFilter(self, obj, ev):
+        if obj is self.text.viewport() and ev.type() == QEvent.Resize:
+            self._groesse_timer.start()
+        return super().eventFilter(obj, ev)
+
+    def _bildbreite(self) -> int:
+        # in 40er-Schritten, damit eine erscheinende Bildlaufleiste kein Neuzeichnen auslöst
+        return max(240, (self.text.viewport().width() - 24) // 40 * 40)
+
+    def _breite_pruefen(self) -> None:
+        if self._kapitel and anleitung.hat_bilder(self._kapitel) \
+                and self._bildbreite() != self._breite:
+            self._rendern(scroll_behalten=True)
+
+    def _rendern(self, scroll_behalten: bool = False) -> None:
+        leiste = self.text.verticalScrollBar()
+        anteil = leiste.value() / leiste.maximum() if scroll_behalten and leiste.maximum() else 0
+        farben = {"gruen": T["gruen"], "rot": T["rot"], "grau": T["grau"],
+                  "kasten": "#0f1513"}
+        self._breite = self._bildbreite()
+        self.text.setHtml(anleitung.kapitel_html(self._kapitel, pfade.TASTE, farben,
+                                                 breite=self._breite, loesung=self._loesung))
+        if anteil:  # erst nach dem Layout ist die neue Länge bekannt
+            QTimer.singleShot(0, lambda: leiste.setValue(round(anteil * leiste.maximum())))
+        else:
+            leiste.setValue(0)
+
+    def _link(self, url: QUrl) -> None:
+        if url.scheme() == "anleitung":
+            self.suche.clear()
+            self.oeffnen(url.path())
+        elif url.scheme() == "loesung":
+            self._loesung = True
+            self._rendern(scroll_behalten=True)
+        elif url.scheme() in ("http", "https"):
+            QDesktopServices.openUrl(url)
 
     def _filtern(self, text: str) -> None:
         treffer = set(anleitung.suchen(text))
@@ -4956,15 +5041,17 @@ class AnleitungSeite(QWidget):
             self.inhalt.setCurrentItem(erstes)
             self._zeigen(erstes)
         else:
+            self._kapitel = None
             self.text.setHtml(f"<p style='color:{T['leise']}'>Nichts gefunden.</p>")
 
     def _zeigen(self, item) -> None:
         if not item or not item.data(Qt.UserRole):
             return
         kid = item.data(Qt.UserRole)
-        farben = {"gruen": T["gruen"], "rot": T["rot"], "grau": T["grau"],
-                  "kasten": "#0f1513"}
-        self.text.setHtml(anleitung.kapitel_html(kid, pfade.TASTE, farben))
+        if kid != self._kapitel:
+            self._loesung = False
+        self._kapitel = kid
+        self._rendern()
         self.text.verticalScrollBar().setValue(0)
         i = self._ids.index(kid)
         self.zurueck.setEnabled(i > 0)

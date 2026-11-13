@@ -61,6 +61,7 @@ jobs:
           --hidden-import update
           --hidden-import tr_import
           --hidden-import anleitung
+          --hidden-import kursbilder
           vyntro.py
 
       - name: Selbsttest (startet das gebaute Programm kurz und beendet es)
