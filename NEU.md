@@ -1,8 +1,8 @@
-**Neu in Vyntro 1.3.0**
+**Neu in Vyntro 1.4.0**
 
-- **Chart-Kurs in der Anleitung:** Elf kurze Lektionen zeigen, wie man Charts liest und Muster erkennt – Kerzen und Kerzenmuster, Trends und Trendlinien, Unterstützung und Widerstand, gleitende Durchschnitte, Volumen, RSI, MACD und Bollinger (inklusive Divergenzen), Doppelboden, Schulter-Kopf-Schulter, Flaggen, Dreiecke und Kurslücken. Mit Lehrbildern, Merksätzen, typischen Fallen, Chance-Risiko-Verhältnis und einer Übung mit Auflösung zum Schluss.
-- **Fachbegriffe A–Z:** Glossar mit rund 60 Begriffen, jeweils mit Link zur passenden Lektion.
-- **Anleitung übersichtlicher:** Wichtiges ist fett und in Mint hervorgehoben, Hinweise stehen in farbigen Kästen (Merke, Vorsicht, So siehst du es in Vyntro), Kapitel sind untereinander verlinkt.
+- **Live-Kerzen im Tagesverlauf:** 1T und 1W zeigen jetzt Kerzen statt einer Linie. Die aktuelle Kerze bewegt sich mit jedem Kurs aus dem Echtzeit-Stream, und nach Ablauf ihrer Zeit beginnt automatisch die nächste.
+- **Kerzengröße wählbar:** bei 1T 1, 5 oder 15 Minuten, bei 1W 15 Minuten, 30 Minuten oder 1 Stunde. Wer lieber die Linie sieht, schaltet mit „Linie“ um.
+- **Live-Status im Chart:** „● LIVE“, solange Echtzeit-Kurse ankommen, sonst „Börse geschlossen“ oder ein Hinweis auf verzögerte Kurse. Das Fadenkreuz zeigt pro Kerze Eröffnung, Hoch, Tief und Schluss.
 
 ---
 

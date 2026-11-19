@@ -788,7 +788,12 @@ gelten als aussagekräftiger.</li>
 </ul>
 <h3>Bedienen</h3>
 <ul>
-<li>Zeiträume <b>1T</b> und <b>1W</b> zeigen den Verlauf eines bzw. fünf Handelstage.</li>
+<li>Zeiträume <b>1T</b> und <b>1W</b> zeigen einen bzw. fünf Handelstage als <b>Live-Kerzen</b>:
+Die letzte Kerze bewegt sich mit jedem neuen Kurs, und nach Ablauf ihrer Zeit beginnt die
+nächste. Daneben wählst du die Kerzengröße (bei 1T 1, 5 oder 15 Minuten, bei 1W 15 Minuten,
+30 Minuten oder 1 Stunde) oder schaltest auf <b>Linie</b> um. Oben rechts steht
+<b>● LIVE</b>, solange Echtzeit-Kurse ankommen – sonst „Börse geschlossen“ oder ein Hinweis
+auf verzögerte Kurse.</li>
 <li>Mit der Maus über den Chart fahren: Fadenkreuz mit Datum, Kurs und Veränderung.</li>
 <li><b>Vergleichen:</b> bis zu drei andere Werte prozentual im selben Chart.</li>
 </ul>
