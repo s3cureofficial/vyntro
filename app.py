@@ -41,6 +41,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
+    QGraphicsOpacityEffect,
     QApplication, QButtonGroup, QCheckBox, QCompleter, QDateEdit, QDialog, QDialogButtonBox,
     QAbstractItemView, QComboBox, QHeaderView, QTableWidget, QTableWidgetItem, QDoubleSpinBox, QFileDialog, QTextBrowser, QInputDialog, QMessageBox, QPlainTextEdit, QRadioButton, QSystemTrayIcon, QSpinBox, QFrame, QGridLayout, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu, QProgressBar, QPushButton,
@@ -814,6 +815,9 @@ ICON_FORMEN = {
     "buch": '<path d="M4.5 5.5A1.5 1.5 0 0 1 6 4h5v15H6a1.5 1.5 0 0 0-1.5 1.5z"/>'
             '<path d="M19.5 5.5A1.5 1.5 0 0 0 18 4h-5v15h5a1.5 1.5 0 0 1 1.5 1.5z"/>'
             '<path d="M4.5 20.5V5.5M19.5 20.5V5.5"/>',
+    "info": '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.2"/><path d="M12 7.8v.1"/>',
+    "check": '<circle cx="12" cy="12" r="8.5"/><path d="M8.2 12.3l2.6 2.6 5-5.4"/>',
+    "warnung": '<path d="M12 4.2L20.5 19H3.5z"/><path d="M12 10v4.2"/><path d="M12 16.8v.1"/>',
     "funke": '<path d="M12 3.5c.6 4.3 2.2 5.9 6.5 6.5-4.3.6-5.9 2.2-6.5 6.5-.6-4.3-2.2-5.9'
              '-6.5-6.5 4.3-.6 5.9-2.2 6.5-6.5z"/><path d="M18.5 15.5v4M16.5 17.5h4"/>',
 }
@@ -3196,41 +3200,178 @@ class AlarmSeite(QWidget):
             self.kl.addLayout(zeile)
 
 
-class Meldung(QFrame):
-    """Kurz eingeblendeter Hinweis oben im Fenster (zusätzlich zur Mitteilung)."""
+class Toast(QFrame):
+    """Einzelner Hinweis oben rechts: Icon, Titel, Text, X zum Schließen und ein feiner
+    Balken, der die verbleibende Zeit zeigt (pausiert, solange die Maus darüber ist)."""
+    geschlossen = Signal(object)
+
+    ARTEN = {"alarm": ("glocke", "#19e6a2"), "info": ("info", "#c9cfcd"),
+             "erfolg": ("check", "#19e6a2"), "fehler": ("warnung", "#ff5a6a"),
+             "update": ("import", "#19e6a2")}
+    BREITE = 370
+
+    def __init__(self, parent: QWidget, titel: str, text: str, art: str = "info",
+                 dauer_ms: int = 8000, aktion=None):
+        super().__init__(parent)
+        self.setObjectName("toast")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setFixedWidth(self.BREITE)
+        self.aktion = aktion
+        symbol, self.farbe = self.ARTEN.get(art, self.ARTEN["info"])
+        c = QColor(self.farbe)
+        self.setStyleSheet(
+            f"QFrame#toast {{ background: {T['solid']}; border: 1px solid "
+            f"rgba({c.red()},{c.green()},{c.blue()},70); border-radius: 10px; }}")
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(14, 12, 8, 14)
+        lay.setSpacing(12)
+        lay.addWidget(icon_label(symbol, self.farbe, 18), 0, Qt.AlignTop)
+        mitte = QVBoxLayout()
+        mitte.setSpacing(3)
+        t = QLabel(titel)
+        t.setWordWrap(True)
+        t.setStyleSheet("font-size: 13px; font-weight: 600; background: transparent;")
+        mitte.addWidget(t)
+        if text:
+            x = QLabel(text)
+            x.setWordWrap(True)
+            x.setStyleSheet(f"font-size: 12px; color: {T['leise']}; background: transparent;")
+            mitte.addWidget(x)
+        if aktion:
+            hinweis = QLabel("Klicken zum Öffnen")
+            hinweis.setStyleSheet(f"font-size: 11px; color: {self.farbe}; "
+                                  "background: transparent;")
+            mitte.addWidget(hinweis)
+        lay.addLayout(mitte, 1)
+        zu = icon_knopf("x", "Schließen", 14)
+        zu.setFixedSize(26, 26)
+        zu.clicked.connect(self.schliessen)
+        lay.addWidget(zu, 0, Qt.AlignTop)
+        if aktion:
+            self.setCursor(Qt.PointingHandCursor)
+
+        self.dauer = dauer_ms
+        self.rest = 1.0
+        self._zu = False
+        self.uhr = QVariantAnimation(self, startValue=1.0, endValue=0.0, duration=dauer_ms)
+        self.uhr.valueChanged.connect(self._tick)
+        self.uhr.finished.connect(self.schliessen)
+        self.wirkung = QGraphicsOpacityEffect(self)
+        self.wirkung.setOpacity(0.0)
+        self.setGraphicsEffect(self.wirkung)
+
+    def starten(self) -> None:
+        self.show()
+        ein = QVariantAnimation(self, startValue=0.0, endValue=1.0, duration=220)
+        ein.setEasingCurve(QEasingCurve.OutCubic)
+        start_x = self.x() + 24
+        ziel_x = self.x()
+        ein.valueChanged.connect(lambda v: (self.wirkung.setOpacity(v),
+                                            self.move(int(start_x + (ziel_x - start_x) * v),
+                                                      self.y())))
+        ein.start()
+        self._ein = ein
+        self.uhr.start()
+
+    def _tick(self, wert) -> None:
+        self.rest = float(wert)
+        self.update()
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        c = QColor(self.farbe)
+        c.setAlpha(150)
+        breite = (self.width() - 22) * max(0.0, self.rest)
+        p.fillRect(QRectF(12, self.height() - 4, breite, 2), c)
+        p.end()
+
+    def enterEvent(self, e):
+        if self.uhr.state() == QVariantAnimation.Running:
+            self.uhr.pause()
+        super().enterEvent(e)
+
+    def leaveEvent(self, e):
+        if self.uhr.state() == QVariantAnimation.Paused:
+            self.uhr.resume()
+        super().leaveEvent(e)
+
+    def mousePressEvent(self, e):
+        if self.aktion:
+            aktion, self.aktion = self.aktion, None
+            QTimer.singleShot(0, aktion)
+            self.schliessen()
+
+    def schliessen(self) -> None:
+        if self._zu:
+            return
+        self._zu = True
+        self.uhr.stop()
+        aus = QVariantAnimation(self, startValue=self.wirkung.opacity(), endValue=0.0,
+                                duration=180)
+        aus.valueChanged.connect(self.wirkung.setOpacity)
+        aus.finished.connect(lambda: (self.geschlossen.emit(self), self.deleteLater()))
+        aus.start()
+        self._aus = aus
+
+
+class Meldung(QObject):
+    """Stapel von Hinweisen oben rechts im Fenster (zusätzlich zur Systemmitteilung)."""
+
+    ABSTAND_OBEN, RAND, LUECKE, MAX = 60, 18, 10, 4
 
     def __init__(self, parent: QWidget):
         super().__init__(parent)
-        self.setObjectName("meldung")
-        self.setStyleSheet(f"QFrame#meldung {{ background: {T['solid']}; border: 1px solid "
-                           f"rgba(25,230,162,90); border-radius: 10px; }}")
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(16, 12, 18, 12)
-        lay.setSpacing(12)
-        symbol = icon_label("glocke", GOLD, 18)
-        lay.addWidget(symbol, 0, Qt.AlignTop)
-        self.text = QLabel()
-        self.text.setTextFormat(Qt.RichText)
-        self.text.setWordWrap(True)
-        self.text.setStyleSheet("font-size: 13px;")
-        lay.addWidget(self.text, 1)
-        self.hide()
-        self.timer = QTimer(self, singleShot=True, interval=9000)
-        self.timer.timeout.connect(self.hide)
+        self.flaeche = parent
+        self.toasts: list[Toast] = []
+        parent.installEventFilter(self)
 
-    def zeige(self, titel: str, text: str) -> None:
-        self.text.setText(f"<span style='font-weight:600'>{titel}</span><br>"
-                          f"<span style='color:{T['leise']}'>{text}</span>")
-        breite = min(520, self.parent().width() - 40)
-        self.setFixedWidth(breite)
-        self.adjustSize()
-        self.move((self.parent().width() - breite) // 2, 64)
-        self.raise_()
-        self.show()
-        self.timer.start()
+    @staticmethod
+    def _art(titel: str) -> str:
+        t = titel.lower()
+        if any(w in t for w in ("fehlgeschlagen", "nicht möglich", "nicht aktiviert", "fehler")):
+            return "fehler"
+        if any(w in t for w in ("fertig", "exportiert", "gespeichert", "importiert")):
+            return "erfolg"
+        return "info"
 
-    def mousePressEvent(self, _e):
-        self.hide()
+    def zeige(self, titel: str, text: str = "", art: str | None = None, aktion=None,
+              dauer_ms: int | None = None) -> None:
+        art = art or self._art(titel)
+        dauer = dauer_ms or (12000 if art in ("alarm", "fehler", "update") else 7000)
+        toast = Toast(self.flaeche, titel, text, art, dauer, aktion)
+        toast.geschlossen.connect(self._weg)
+        toast.adjustSize()
+        self.toasts.insert(0, toast)  # neuester oben
+        while len(self.toasts) > self.MAX:
+            self.toasts.pop().schliessen()
+        self.anordnen()
+        toast.raise_()
+        toast.starten()
+
+    def _weg(self, toast) -> None:
+        if toast in self.toasts:
+            self.toasts.remove(toast)
+        self.anordnen()
+
+    def anordnen(self) -> None:
+        y = self.ABSTAND_OBEN
+        x = self.flaeche.width() - Toast.BREITE - self.RAND
+        for t in self.toasts:
+            t.adjustSize()
+            t.move(x, y)
+            t.raise_()
+            y += t.height() + self.LUECKE
+
+    def hide(self) -> None:
+        for t in list(self.toasts):
+            t.schliessen()
+
+    def eventFilter(self, obj, e):
+        if obj is self.flaeche and e.type() == QEvent.Resize:
+            self.anordnen()
+        return False
 
 
 class Detail(QWidget):
@@ -6346,7 +6487,8 @@ class Fenster(QMainWindow):
         self.update_knopf.show()
         if neu:
             self.meldung.zeige(f"Vyntro {info['version']} ist verfügbar",
-                               "Klick oben auf „Neue Version“, um zu aktualisieren.")
+                               "Mit einem Klick aktualisieren – dauert nur einen Moment.",
+                               art="update", aktion=self.update_zeigen)
 
     def update_zeigen(self) -> None:
         if self.update_info:
@@ -6497,7 +6639,7 @@ class Fenster(QMainWindow):
 
     def ausloesen(self, titel: str, text: str) -> None:
         konto.melden(titel, text)
-        self.meldung.zeige(titel, text)
+        self.meldung.zeige(titel, text, art="alarm")
         QApplication.alert(self)  # Dock-Symbol hüpft, falls Vyntro im Hintergrund ist
 
     def kurs_alarme_pruefen(self, tickers) -> None:

@@ -1,8 +1,7 @@
-**Neu in Vyntro 1.4.0**
+**Neu in Vyntro 1.5.0**
 
-- **Live-Kerzen im Tagesverlauf:** 1T und 1W zeigen jetzt Kerzen statt einer Linie. Die aktuelle Kerze bewegt sich mit jedem Kurs aus dem Echtzeit-Stream, und nach Ablauf ihrer Zeit beginnt automatisch die nächste.
-- **Kerzengröße wählbar:** bei 1T 1, 5 oder 15 Minuten, bei 1W 15 Minuten, 30 Minuten oder 1 Stunde. Wer lieber die Linie sieht, schaltet mit „Linie“ um.
-- **Live-Status im Chart:** „● LIVE“, solange Echtzeit-Kurse ankommen, sonst „Börse geschlossen“ oder ein Hinweis auf verzögerte Kurse. Das Fadenkreuz zeigt pro Kerze Eröffnung, Hoch, Tief und Schluss.
+- **Schönere Hinweise:** Meldungen erscheinen jetzt oben rechts in der Ecke, mit passendem Icon (Alarm, Info, Erfolg, Fehler, Update) und einem **X zum sofortigen Schließen**. Ein feiner Balken zeigt, wie lange der Hinweis noch bleibt – fährst du mit der Maus darüber, wartet er.
+- Mehrere Hinweise stapeln sich übersichtlich untereinander; der Hinweis auf eine neue Version öffnet per Klick direkt das Update.
 
 ---
 
