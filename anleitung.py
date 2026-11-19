@@ -788,10 +788,18 @@ gelten als aussagekräftiger.</li>
 </ul>
 <h3>Bedienen</h3>
 <ul>
-<li>Zeiträume <b>1T</b> und <b>1W</b> zeigen einen bzw. fünf Handelstage als <b>Live-Kerzen</b>:
+<li>Zeiträume <b>5min</b>, <b>24h</b>, <b>1T</b> und <b>1W</b> zeigen <b>Live-Kerzen</b>:
 Die letzte Kerze bewegt sich mit jedem neuen Kurs, und nach Ablauf ihrer Zeit beginnt die
-nächste. Daneben wählst du die Kerzengröße (bei 1T 1, 5 oder 15 Minuten, bei 1W 15 Minuten,
-30 Minuten oder 1 Stunde) oder schaltest auf <b>Linie</b> um. Oben rechts steht
+nächste. Daneben wählst du die Kerzengröße (bei 5min 5, 10 oder 30 Sekunden, bei 24h 5, 15
+oder 30 Minuten, bei 1T 1, 5 oder 15 Minuten, bei 1W 15 Minuten, 30 Minuten oder 1 Stunde)
+oder schaltest auf <b>Linie</b> um.</li>
+<li><b>5min</b> ist die Lupe für die letzten fünf Minuten. Sekundenkerzen liefert Yahoo nicht,
+Vyntro baut sie selbst aus den Echtzeit-Kursen, sobald der Wert offen ist. Kommen keine (etwa
+weil die Börse geschlossen ist), siehst du so lange die letzten 1-Minuten-Kerzen.</li>
+<li><b>24h</b> zeigt die letzten 24 Stunden bis zum letzten Kurs, bei Aktien inklusive vor-
+und nachbörslichem Handel. Bei Krypto, das rund um die Uhr gehandelt wird, ist das die übliche
+24-Stunden-Ansicht.</li>
+<li>Oben rechts im Chart steht
 <b>● LIVE</b>, solange Echtzeit-Kurse ankommen – sonst „Börse geschlossen“ oder ein Hinweis
 auf verzögerte Kurse.</li>
 <li>Mit der Maus über den Chart fahren: Fadenkreuz mit Datum, Kurs und Veränderung.</li>

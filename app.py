@@ -30,6 +30,7 @@ import re
 
 import numpy as np
 import threading
+from collections import deque
 import time
 
 from PySide6.QtCore import (
@@ -567,6 +568,7 @@ class LiveStream:
     def __init__(self):
         self._lock = threading.Lock()
         self._neu: dict[str, tuple] = {}
+        self._ticks: dict[str, deque] = {}  # alle Kurse der letzten Minuten je Ticker
         self._tickers: set[str] = set()
         self._ws = None
         self.verbunden = False
@@ -600,7 +602,13 @@ class LiveStream:
             return
         with self._lock:
             self._neu[t] = (preis, zeit, ch)
+            self._ticks.setdefault(t, deque(maxlen=4000)).append((zeit, preis))
             self.updates += 1
+
+    def ticks(self, ticker: str, seit: pd.Timestamp) -> list[tuple]:
+        """Alle Stream-Kurse (Zeit in UTC, Preis) eines Tickers seit einem Zeitpunkt."""
+        with self._lock:
+            return [x for x in self._ticks.get(ticker, ()) if x[0] >= seit]
 
     def _laufen(self) -> None:
         while True:
@@ -1268,12 +1276,52 @@ class Zeile(QWidget):
 
 # ------------------------------------------------------------------ Chart
 
-ZEITRAEUME = [("1T", "T"), ("1W", "W"), ("1M", 1), ("3M", 3), ("6M", 6), ("1J", 12),
-              ("3J", 36), ("Max", None)]
-INTRADAY = {"T": "1d", "W": "5d"}  # Zeitraum bei Yahoo
-# Kerzengrößen je Zeitraum: (Yahoo-Intervall, Anzeige, Minuten); Standard ist die mittlere
-INTERVALLE = {"T": [("1m", "1 Min", 1), ("5m", "5 Min", 5), ("15m", "15 Min", 15)],
-              "W": [("15m", "15 Min", 15), ("30m", "30 Min", 30), ("60m", "1 Std", 60)]}
+ZEITRAEUME = [("5min", "5M"), ("24h", "24H"), ("1T", "T"), ("1W", "W"), ("1M", 1),
+              ("3M", 3), ("6M", 6), ("1J", 12), ("3J", 36), ("Max", None)]
+# Zeitraum bei Yahoo; 5M und 24H holen mehr und schneiden dann zu
+INTRADAY = {"5M": "1d", "24H": "5d", "T": "1d", "W": "5d"}
+FENSTER = {"5M": pd.Timedelta(minutes=5), "24H": pd.Timedelta(hours=24)}
+# Kerzengrößen je Zeitraum: (Intervall, Anzeige, Minuten); Standard ist die mittlere.
+# Sekundenkerzen gibt es bei Yahoo nicht – Vyntro baut sie aus dem Live-Stream.
+INTERVALLE = {"5M": [("5s", "5s", 5 / 60), ("10s", "10s", 10 / 60), ("30s", "30s", 0.5)],
+              "24H": [("5m", "5m", 5), ("15m", "15m", 15), ("30m", "30m", 30)],
+              "T": [("1m", "1m", 1), ("5m", "5m", 5), ("15m", "15m", 15)],
+              "W": [("15m", "15m", 15), ("30m", "30m", 30), ("60m", "1h", 60)]}
+INTERVALL_STANDARD = {"5M": "10s", "24H": "15m", "T": "5m", "W": "30m"}
+REFERENZ_TEXT = {"5M": ("vor 5 Min ", "in 5 Minuten"), "24H": ("vor 24 Std ", "in 24 Stunden"),
+                 "T": ("Vortag ", "seit Vortag"), "W": ("Start ", "in 5 Handelstagen")}
+
+
+def kerzen_name(minuten: float) -> str:
+    """„10-Sek“, „5-Min“, „1-Std“ für die Statuszeile."""
+    if minuten < 1:
+        return f"{round(minuten * 60)}-Sek"
+    if minuten >= 60:
+        return f"{round(minuten / 60)}-Std"
+    return f"{round(minuten)}-Min"
+
+
+def _zuschneiden(ohlc: pd.DataFrame, art: str) -> pd.DataFrame:
+    """5M/24H: nur das letzte Zeitfenster bis zum letzten Kurs behalten."""
+    if art not in FENSTER or ohlc.empty:
+        return ohlc
+    return ohlc[ohlc.index > ohlc.index[-1] - FENSTER[art]]
+
+
+def kerzen_aus_ticks(ticks: list[tuple], minuten: float) -> pd.DataFrame:
+    """Stream-Kurse (Zeit UTC, Preis) zu OHLC-Kerzen in Ortszeit zusammenfassen."""
+    leer = pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"], dtype=float)
+    if not ticks:
+        return leer
+    lokal = datetime.now().astimezone().tzinfo
+    reihe = pd.Series([p for _, p in ticks],
+                      index=pd.DatetimeIndex([z for z, _ in ticks]).tz_convert(lokal)
+                      .tz_localize(None), dtype=float)
+    reihe = reihe[~reihe.index.duplicated(keep="last")].sort_index()
+    ohlc = reihe.resample(pd.Timedelta(seconds=round(minuten * 60))).ohlc().dropna()
+    ohlc.columns = ["Open", "High", "Low", "Close"]
+    ohlc["Volume"] = 0.0
+    return ohlc
 
 
 class _IntradaySignale(QObject):
@@ -1292,21 +1340,27 @@ class IntradayJob(QRunnable):
         ergebnis = None
         try:
             tk = yf.Ticker(self.ticker)
-            roh = tk.history(period=INTRADAY[self.art], interval=self.intervall,
-                             auto_adjust=True)
+            # 5M: Minutenkerzen als Rückfall, falls (noch) keine Live-Kurse kommen;
+            # 5M/24H mit vor- und nachbörslichem Handel
+            intervall = "1m" if self.art == "5M" else self.intervall
+            roh = tk.history(period=INTRADAY[self.art], interval=intervall,
+                             auto_adjust=True, prepost=self.art in FENSTER)
             ohlc = roh[["Open", "High", "Low", "Close", "Volume"]].dropna(
                 subset=["Open", "High", "Low", "Close"])
-            if len(ohlc) >= 2:
+            if len(ohlc) >= (1 if self.art == "5M" else 2):
                 lokal = datetime.now().astimezone().tzinfo
                 ohlc.index = ohlc.index.tz_convert(lokal).tz_localize(None)
+                ohlc = _zuschneiden(ohlc, self.art)
                 meta = tk.history_metadata or {}
                 if self.art == "T":
                     referenz = meta.get("chartPreviousClose") or meta.get("previousClose")
                 else:
                     referenz = None
-                minuten = next(m for code, _, m in INTERVALLE[self.art] if code == self.intervall)
+                minuten = 1 if self.art == "5M" else next(
+                    m for code, _, m in INTERVALLE[self.art] if code == self.intervall)
                 ergebnis = {"ohlc": ohlc, "referenz": float(referenz or ohlc["Open"].iloc[0]),
-                            "zeit": time.time(), "minuten": minuten, "live_zeit": None}
+                            "zeit": time.time(), "minuten": minuten, "live_zeit": None,
+                            "minuten_ohlc": ohlc.copy() if self.art == "5M" else None}
         except Exception:  # noqa: BLE001
             ergebnis = None
         try:
@@ -1425,6 +1479,11 @@ class Chart(FigureCanvasQTAgg):
         referenz = iv["referenz"]
         ys = kurse.to_numpy(dtype=float)
         xs = np.arange(len(ys), dtype=float)
+        plaetze = len(xs)
+        if art == "5M":  # feste 5-Minuten-Achse: Kerzen füllen sich von rechts auf
+            schritt = pd.Timedelta(minutes=iv["minuten"])
+            plaetze = max(round(5 / iv["minuten"]), 2)
+            xs = (plaetze - 1 - (kurse.index[-1] - kurse.index) // schritt).to_numpy(dtype=float)
         letzter = float(ys[-1])
         farbe = wert_farbe(letzter - referenz)
         self._fk = None
@@ -1467,10 +1526,10 @@ class Chart(FigureCanvasQTAgg):
             for sp in ax_v.spines.values():
                 sp.set_visible(False)
         ax.axhline(referenz, color=T["leise"], lw=1, ls=(0, (1, 2.5)), zorder=3)
-        ax.text(0, referenz, ("Vortag " if art == "T" else "Start ") + kurs_text(referenz),
+        ax.text(0, referenz, REFERENZ_TEXT[art][0] + kurs_text(referenz),
                 color=T["leise"], fontsize=7.5, va="bottom", ha="left")
-        ax.set_ylim(boden, oben + spiel)
-        ax.set_xlim(0, len(xs) - 1 + max(1, len(xs) * 0.02))
+        ax.set_ylim(boden, oben + spiel * 2)  # oben Platz für die Kopfzeile
+        ax.set_xlim(-0.6, plaetze - 1 + max(1, plaetze * 0.02))
         nk = 0 if oben >= 1000 else 2 if oben >= 1 else 4
         ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: zahl(v, nk)))
         ax.annotate(kurs_text(letzter), xy=(1, letzter), xycoords=("axes fraction", "data"),
@@ -1481,7 +1540,7 @@ class Chart(FigureCanvasQTAgg):
                     annotation_clip=False, zorder=10)
         ax.text(0.01, 0.97, f"{'+' if letzter >= referenz else '−'}"
                 f"{differenz_text(letzter - referenz, referenz)} ({prozent(letzter / referenz - 1, 2)})"
-                f"  {'seit Vortag' if art == 'T' else 'in 5 Handelstagen'}",
+                f"  {REFERENZ_TEXT[art][1]}",
                 transform=ax.transAxes, color=farbe, fontsize=9.5, fontweight="medium",
                 va="top")
         status_text, status_farbe = status
@@ -1490,7 +1549,26 @@ class Chart(FigureCanvasQTAgg):
                     fontsize=9, fontweight="medium", va="top", ha="right")
 
         zeiten = kurse.index
-        if art == "T":
+        if art == "5M":
+            ende = zeiten[-1]
+            marken = [(xs[-1] - k / iv["minuten"], ende.floor("1min") - pd.Timedelta(minutes=k)
+                       ) for k in range(6)]
+            marken = [(x - (ende - ende.floor("1min")) / schritt, z) for x, z in marken]
+            marken = [(x, z) for x, z in marken if x >= -0.6]
+            ax.set_xticks([x for x, _ in marken], [f"{z:%H:%M}" for _, z in marken])
+            texte = [f"{z:%H:%M:%S}–{z + schritt:%H:%M:%S}" for z in zeiten]
+        elif art == "24H":
+            alle = [i for i in range(len(zeiten))
+                    if i > 0 and zeiten[i].hour != zeiten[i - 1].hour]
+            marken = alle[::max(1, len(alle) // 8)]
+            ax.set_xticks(marken, [f"{zeiten[i]:%d.%m.}" if zeiten[i].hour == 0
+                                   else f"{zeiten[i]:%H:%M}" for i in marken])
+            for i in alle:
+                if zeiten[i].date() != zeiten[i - 1].date():  # Mitternacht
+                    ax.axvline(i, color=T["gitter"], lw=0.8, zorder=1)
+            schritt = pd.Timedelta(minutes=iv["minuten"])
+            texte = [f"{z:%d.%m. %H:%M}–{z + schritt:%H:%M}" for z in zeiten]
+        elif art == "T":
             marken = [i for i in range(len(zeiten))
                       if i > 0 and zeiten[i].hour != zeiten[i - 1].hour]
             schritt = max(1, len(marken) // 7)
@@ -3521,23 +3599,27 @@ class Detail(QWidget):
             b.setProperty("monate", monate)
             self.zeitraum.addButton(b, i)
             fusszeile.addWidget(b)
-        self.zeitraum.button(5).setChecked(True)
+        self.zeitraum_setzen(12)
         self.zeitraum.idClicked.connect(lambda _: self.zeichne_chart())
         self.intraday: dict[tuple[str, str], dict] = {}
         self.intraday_ladend: set[tuple[str, str]] = set()
         einst = QSettings("trading-signale", "app")
         # Kerzengröße und Darstellung im Tagesverlauf (1T/1W)
-        self.intervall_wahl = {"T": einst.value("intervall_T", "5m", type=str),
-                               "W": einst.value("intervall_W", "30m", type=str)}
+        self.intervall_wahl = {}
+        for art, standard in INTERVALL_STANDARD.items():
+            code = einst.value(f"intervall_{art}", standard, type=str)
+            self.intervall_wahl[art] = (code if code in [c for c, _, _ in INTERVALLE[art]]
+                                        else standard)
         self.intervall_box = QWidget()
         ib = QHBoxLayout(self.intervall_box)
-        ib.setContentsMargins(14, 0, 0, 0)
+        ib.setContentsMargins(10, 0, 0, 0)
         ib.setSpacing(2)
         self.intervall_knoepfe = QButtonGroup(self)
         for i in range(3):
             b = QPushButton("", objectName="seg", checkable=True)
             b.setCursor(Qt.PointingHandCursor)
-            b.setToolTip("Zeitraum pro Kerze")
+            b.setToolTip("Kerzengröße: Zeitraum pro Kerze (s = Sekunden, m = Minuten, "
+                         "h = Stunde)")
             self.intervall_knoepfe.addButton(b, i)
             ib.addWidget(b)
         self.intervall_knoepfe.idClicked.connect(self._intervall_gewaehlt)
@@ -3711,11 +3793,14 @@ class Detail(QWidget):
         self.vergleich_knopf.setText(f"Vergleich · {len(self.vergleich)}" if self.vergleich
                                      else "Vergleichen")
         if self.vergleich and self.zeitraum_art() in INTRADAY:
-            self.zeitraum.button(5).setChecked(True)
+            self.zeitraum_setzen(12)
         self.zeichne_chart()
 
     def zeitraum_art(self):
         return self.zeitraum.checkedButton().property("monate")
+
+    def zeitraum_setzen(self, art) -> None:
+        self.zeitraum.button([a for _, a in ZEITRAEUME].index(art)).setChecked(True)
 
     def _intervall_gewaehlt(self, i: int) -> None:
         art = self.zeitraum_art()
@@ -3732,6 +3817,8 @@ class Detail(QWidget):
     def _intervall_knoepfe_setzen(self, art) -> None:
         sichtbar = art in INTERVALLE
         self.intervall_box.setVisible(sichtbar)
+        for key in ("bollinger", "52w"):  # gibt es nur auf Tagesbasis
+            self.extra_knoepfe[key].setVisible(not sichtbar)
         if not sichtbar:
             return
         for i, (code, txt, _m) in enumerate(INTERVALLE[art]):
@@ -3746,17 +3833,40 @@ class Detail(QWidget):
         """„● LIVE“, wenn gerade Kurse aus dem Echtzeit-Stream kommen, sonst Hinweis."""
         live = iv.get("live_zeit")
         verz = (self.daten or {}).get("verzoegerung") or 0
+        if iv.get("rueckfall"):
+            return "Warte auf Live-Kurse · bis dahin 1-Min-Kerzen", T["leise"]
         if live and time.time() - live < 120:
-            return (f"● LIVE · {iv['minuten']}-Min-Kerzen" + (f" · ca. {verz} Min. verzögert"
-                                                              if verz else ""),
+            return (f"● LIVE · {kerzen_name(iv['minuten'])}-Kerzen"
+                    + (f" · ca. {verz} Min. verzögert" if verz else ""),
                     T["orange"] if verz else T["gruen"])
         letzte = iv["ohlc"].index[-1] + pd.Timedelta(minutes=iv["minuten"])
         if (pd.Timestamp.now() - letzte).total_seconds() > 1800:
             return f"Börse geschlossen · letzter Kurs {letzte:%d.%m. %H:%M}", T["leise"]
-        return f"{iv['minuten']}-Min-Kerzen · aktualisiert jede Minute", T["leise"]
+        return f"{kerzen_name(iv['minuten'])}-Kerzen · aktualisiert jede Minute", T["leise"]
+
+    def _sekundenkerzen(self, iv: dict) -> None:
+        """5M: Kerzen aus den Stream-Kursen der letzten 5 Minuten bauen. Solange keine
+        kommen (z. B. Börse geschlossen), bleiben die 1-Min-Kerzen von Yahoo stehen."""
+        minuten = next(m for c, _, m in INTERVALLE["5M"] if c == self.intervall_wahl["5M"])
+        stream = getattr(self.window(), "stream", None)
+        ticks = (stream.ticks(self.ticker, pd.Timestamp.now(tz="UTC") - FENSTER["5M"])
+                 if stream else [])
+        ohlc = kerzen_aus_ticks(ticks, minuten)
+        if len(ohlc):
+            iv["ohlc"], iv["minuten"], iv["rueckfall"] = ohlc, minuten, False
+            if iv.get("live_zeit") is None and ticks:
+                iv["live_zeit"] = ticks[-1][0].timestamp()
+        else:
+            iv["ohlc"], iv["minuten"], iv["rueckfall"] = iv["minuten_ohlc"], 1, True
 
     def _intraday_zeichnen(self, iv: dict, art) -> None:
         self._letzte_zeichnung = time.time()
+        if art == "5M":
+            self._sekundenkerzen(iv)
+        if art == "5M" and len(iv["minuten_ohlc"]):  # Bezug: Kurs vor 5 Minuten (Yahoo)
+            iv["referenz"] = float(iv["minuten_ohlc"]["Open"].iloc[0])
+        elif art in FENSTER and len(iv["ohlc"]):  # Bezug: erster Kurs im Fenster
+            iv["referenz"] = float(iv["ohlc"]["Open"].iloc[0])
         self.chart.zeichne_intraday(self.daten, iv, art, kerzen=not self.linie_knopf.isChecked(),
                                     status=self._live_status(iv),
                                     volumen="volumen" in self.extras)
@@ -3770,10 +3880,15 @@ class Detail(QWidget):
         live = self.daten.get("live")
         if not iv or not live or live[1] is None:
             return
+        if art == "5M":  # Sekundenkerzen kommen direkt aus dem Stream-Puffer
+            iv["live_zeit"] = time.time()
+            if time.time() - self._letzte_zeichnung >= 0.9:
+                self._intraday_zeichnen(iv, art)
+            return
         preis = float(live[0])
         zeit = live[1].tz_convert(datetime.now().astimezone().tzinfo).tz_localize(None)
         ohlc = iv["ohlc"]
-        start = zeit.floor(f"{iv['minuten']}min")
+        start = zeit.floor(pd.Timedelta(minutes=iv["minuten"]))
         letzte = ohlc.index[-1]
         if start < letzte:
             return  # älterer oder verzögerter Kurs
@@ -3783,6 +3898,8 @@ class Detail(QWidget):
             ohlc.loc[letzte, "Close"] = preis
         else:
             ohlc.loc[start] = [preis, preis, preis, preis, 0.0]
+            if art in FENSTER:  # 24H rollt weiter: alte Kerzen fallen vorn heraus
+                iv["ohlc"] = _zuschneiden(ohlc, art)
         iv["live_zeit"] = time.time()
         if time.time() - self._letzte_zeichnung >= 0.9:
             self._intraday_zeichnen(iv, art)
@@ -3946,7 +4063,7 @@ class Detail(QWidget):
             self.k_rsi.balken.hide()
             # gleich die Live-Kerzen zeigen statt eines Tages-Charts mit wenigen Punkten
             if self.zeitraum_art() not in INTRADAY and d["handelstage"] < 20:
-                self.zeitraum.button(0).setChecked(True)
+                self.zeitraum_setzen("T")
             self.zeichne_chart()
             self._backtest_leer()
             return
@@ -6500,7 +6617,7 @@ class Fenster(QMainWindow):
     def sekunde(self) -> None:
         """Jede Sekunde: neue Kurse aus dem Live-Stream übernehmen und anzeigen."""
         self.stream.abonnieren(t for t in [t for t, _ in HOME_INDIZES] + self.alle_tickers()
-                               if t in self.daten)
+                               + [self.aktueller_ticker()] if t in self.daten)
         neu = self.stream.abholen()
         for t, wert in neu.items():
             if t in self.daten:

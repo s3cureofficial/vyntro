@@ -1,8 +1,9 @@
-**Neu in Vyntro 1.5.1**
+**Neu in Vyntro 1.6.0**
 
-- **Neue Börsengänge werden angezeigt:** Werte, die erst seit Kurzem gehandelt werden (z. B. Anthropic, ANT), zeigten bisher fälschlich „keine Kursdaten“. Jetzt erscheinen Kurs, Live-Kerzen, Infos und Nachrichten sofort – mit dem Hinweis **NEU** statt eines Signals, bis genug Kursverlauf für die Regel vorhanden ist (rund 200 Handelstage).
-- Am ersten Handelstag rechnet „heute“ gegen den Ausgabepreis.
-- Verständlicherer Hinweis, wenn ein Ticker gar nicht existiert.
+- **Neue Chart-Zeiträume 5min und 24h** links neben 1T.
+- **5min** zeigt die letzten fünf Minuten in **Sekundenkerzen** (5, 10 oder 30 Sekunden). Vyntro baut sie live aus den Echtzeit-Kursen. Solange keine kommen (z. B. Börse geschlossen), siehst du die letzten 1-Minuten-Kerzen.
+- **24h** zeigt die letzten 24 Stunden in 5-, 15- oder 30-Minuten-Kerzen, bei Aktien mit vor- und nachbörslichem Handel. Die Ansicht rollt live weiter.
+- Kerzengrößen kurz beschriftet (s, m, h). Bollinger und 52W sind bei den Live-Zeiträumen ausgeblendet, weil sie nur auf Tagesbasis gelten.
 
 ---
 
