@@ -536,9 +536,27 @@ def kurs_jetzt(d: dict) -> tuple[float, float, "pd.Timestamp | None"]:
             return preis, live[2], zeit
         tag = zeit.tz_convert(None).normalize()
         vorher = df["kurs"][df.index.normalize() < tag]
-        vortag = float(vorher.iloc[-1]) if len(vorher) else float(df["kurs"].iloc[-2])
+        vortag = float(vorher.iloc[-1]) if len(vorher) else _vortag(d)
         return preis, preis / vortag - 1, zeit
-    return float(df["kurs"].iloc[-1]), float(df["kurs"].iloc[-1] / df["kurs"].iloc[-2] - 1), None
+    return float(df["kurs"].iloc[-1]), float(df["kurs"].iloc[-1] / _vortag(d) - 1), None
+
+
+def _vortag(d: dict) -> float:
+    """Bezugskurs für „heute“. Am ersten Handelstag eines neuen Werts gibt es keinen
+    Vortag – dann gilt der von Yahoo gemeldete Vortageskurs bzw. der erste Kurs."""
+    df = d["df"]
+    if len(df) >= 2:
+        return float(df["kurs"].iloc[-2])
+    info = d.get("info") or {}
+    for schluessel in ("regularMarketPreviousClose", "previousClose", "open",
+                       "regularMarketOpen"):
+        wert = info.get(schluessel)
+        if wert:
+            return float(wert)
+    ohlc = d.get("ohlc")
+    if ohlc is not None and len(ohlc):
+        return float(ohlc["Open"].iloc[0])
+    return float(df["kurs"].iloc[-1])
 
 
 class LiveStream:
@@ -703,21 +721,76 @@ def cache_datei(ticker: str) -> "s.Path":
     return CACHE / (re.sub(r"[^A-Za-z0-9._-]", "_", ticker.upper()) + ".pkl")
 
 
+MIN_HANDELSTAGE = s.SMA_LANG  # so viel Kursverlauf braucht die Regel für ein Signal
+
+
+def _neu_df(kurse: pd.DataFrame) -> pd.DataFrame:
+    """Für frisch gelistete Werte: Kursverlauf ohne Signal (alle Teilsignale neutral)."""
+    df = kurse.copy()
+    k = df["kurs"]
+    df["sma_kurz"] = k.rolling(s.SMA_KURZ, min_periods=1).mean()
+    df["sma_lang"] = k.rolling(s.SMA_LANG, min_periods=1).mean()
+    df["rsi"] = float("nan")
+    df["macd"] = 0.0
+    df["macd_signal"] = 0.0
+    for spalte in ("s_trend", "s_rsi", "s_macd", "score"):
+        df[spalte] = 0
+    return df
+
+
+def _neu_begruendung(ticker: str, tage: int):
+    seit = "heute" if tage <= 1 else f"seit {tage} Handelstagen"
+    return begruendung.Begruendung(
+        signal="NEU", score=0,
+        kurz=(f"{ticker} ist erst {seit} an der Börse. Für ein Signal braucht die Regel rund "
+              f"{MIN_HANDELSTAGE} Handelstage Kursverlauf (Ø 200 Tage, RSI, MACD) – bis dahin "
+              "zeigt Vyntro Kurs, Live-Kerzen, Infos und Nachrichten, aber kein Signal."),
+        gruende=[], dagegen=[], kontext=[],
+        wechsel=f"Das Signal erscheint automatisch, sobald genug Kursverlauf da ist "
+                f"(noch etwa {max(0, MIN_HANDELSTAGE - tage)} Handelstage).")
+
+
+def signal_von(d: dict) -> str:
+    """KAUFEN / HALTEN / VERKAUFEN laut Regel – oder NEU bei zu kurzer Historie."""
+    if d.get("neu"):
+        return "NEU"
+    return s.empfehlung(int(d["df"]["score"].iloc[-1]))
+
+
 def auswerten(ticker: str, roh: pd.DataFrame, info: dict, meta: dict, fx) -> dict:
     """Aus Rohkursen und Stammdaten alles berechnen, was die App anzeigt."""
-    df = s.berechne_indikatoren(roh[["Close"]].rename(columns={"Close": "kurs"}).dropna())
-    if df.empty:
-        raise ValueError("zu wenig Historie für die Analyse")
+    kurse = roh[["Close"]].rename(columns={"Close": "kurs"}).dropna()
+    if kurse.empty:
+        raise ValueError("keine Kursdaten gefunden")
+    df = s.berechne_indikatoren(kurse)
+    neu = df.empty  # frisch an der Börse: noch nicht genug Historie für die Regel
+    if neu:
+        df = _neu_df(kurse)
+        try:
+            bt = s.backteste(df)
+        except Exception:  # noqa: BLE001
+            bt = None
+        bg = _neu_begruendung(ticker, len(kurse))
+        pr = None
+    else:
+        bt = s.backteste(df)
+        bg = begruendung.erklaere(df, ticker)
+        try:
+            pr = prognose.erstelle(df, info)
+        except Exception:  # noqa: BLE001
+            pr = None
     boerse = meta.get("exchangeName", "")
     return {
+        "neu": neu,
+        "handelstage": len(kurse),
         "df": df,
-        "bt": s.backteste(df),
-        "begruendung": begruendung.erklaere(df, ticker),
+        "bt": bt,
+        "begruendung": bg,
         "kurse_voll": roh["Close"].dropna(),  # ohne 200-Tage-Anlaufzeit
         "ohlc": roh[["Open", "High", "Low", "Close"]].dropna(),
         "volumen": roh["Volume"].fillna(0) if "Volume" in roh else None,
         "verzoegerung": int(info.get("exchangeDataDelayedBy") or 0),
-        "prognose": prognose.erstelle(df, info),
+        "prognose": pr,
         "info": info,
         "name": " ".join((meta.get("longName") or meta.get("shortName") or ticker).split()),
         "waehrung": meta.get("currency", ""),
@@ -1186,7 +1259,7 @@ class Zeile(QWidget):
             monat = df["kurs"].iloc[-22:].tolist()
             self.spark.setze(monat, wert_farbe(monat[-1] - monat[0]), None,
                              "Verlauf letzter Monat")
-        sig = s.empfehlung(int(df["score"].iloc[-1]))
+        sig = signal_von(self.daten)
         self.pill.setText(sig)
         self.pill.setStyleSheet(pill_stil(signal_farbe(sig)))
         b = self.daten["begruendung"]
@@ -1760,6 +1833,7 @@ class BegruendungKarte(QFrame):
         "VERKAUFEN": ("Warum verkaufen?", "Gründe für das Verkaufssignal", "Was dagegen spricht"),
         "KAUFEN": ("Warum kaufen?", "Gründe für das Kaufsignal", "Was dagegen spricht"),
         "HALTEN": ("Warum halten?", "Spricht für steigende Kurse", "Spricht für fallende Kurse"),
+        "NEU": ("Warum noch kein Signal?", "", ""),
     }
 
     def __init__(self):
@@ -1838,6 +1912,8 @@ class BegruendungKarte(QFrame):
         self.rechts_titel.setText(rechts)
         self.links.setText(self._liste(b.gruende, "keine"))
         self.rechts.setText(self._liste(b.dagegen, "Nichts – alle Indikatoren sind sich einig."))
+        for w in (self.links_titel, self.rechts_titel, self.links, self.rechts):
+            w.setVisible(b.signal != "NEU")
         self.trenner.setStyleSheet(f"background: {T['gitter']};")
 
         kontext = "<br>".join(
@@ -3765,6 +3841,17 @@ class Detail(QWidget):
             if iv and time.time() - iv["zeit"] > 60:
                 self.intraday_laden(self.ticker, art)
 
+    def _backtest_leer(self) -> None:
+        self.bt_titel.setText("Noch kein Backtest – zu wenig Kursverlauf")
+        for w_r, w_dd, w_x in self.bt.values():
+            w_r.setText("–")
+            w_r.setStyleSheet("")
+            w_dd.setText("–")
+            w_x.setText("")
+        self.bt_fazit.setText("")
+        self.orders.setText("Noch keine Signale.")
+        self.neu.setText("")
+
     def setze_gemerkt(self, gemerkt: bool) -> None:
         if gemerkt:
             self.merken.setText(" Gemerkt")
@@ -3822,7 +3909,8 @@ class Detail(QWidget):
         df, bt = d["df"], d["bt"]
         z = df.iloc[-1]
         score = int(z["score"])
-        sig = s.empfehlung(score)
+        sig = signal_von(d)
+        neu = bool(d.get("neu"))
 
         self.name.setze(d["name"])
         self.name.setToolTip(d["name"])
@@ -3839,13 +3927,29 @@ class Detail(QWidget):
                 lbl.setStyleSheet(f"background: {farbe}; border-radius: 5px;")
         self.badge.setText(sig)
         self.badge.setStyleSheet(pill_stil(farbe, gross=True))
-        self.badge_info.setText(f"Signal laut Regel · Score {score:+d} von ±3")
+        self.badge_info.setText(
+            f"Neu an der Börse · {d['handelstage']} Handelstag"
+            f"{'' if d['handelstage'] == 1 else 'e'} – noch kein Signal" if neu
+            else f"Signal laut Regel · Score {score:+d} von ±3")
         self.k_begruendung.setze(d["begruendung"], ticker)
-        self.k_prognose.setze(d["prognose"], d["waehrung"], ticker)
+        self.k_prognose.setVisible(d["prognose"] is not None)
+        if d["prognose"] is not None:
+            self.k_prognose.setze(d["prognose"], d["waehrung"], ticker)
         self.k_info.setze_infos(d)
         self.k_sparplan.setze(d)
 
         # Indikatoren
+        if neu:
+            fehlt = f"braucht {MIN_HANDELSTAGE} Handelstage, bisher {d['handelstage']}"
+            for k in (self.k_trend, self.k_rsi, self.k_macd):
+                k.setze("–", "noch keine Daten", 0, fehlt)
+            self.k_rsi.balken.hide()
+            # gleich die Live-Kerzen zeigen statt eines Tages-Charts mit wenigen Punkten
+            if self.zeitraum_art() not in INTRADAY and d["handelstage"] < 20:
+                self.zeitraum.button(0).setChecked(True)
+            self.zeichne_chart()
+            self._backtest_leer()
+            return
         tr = int(z["s_trend"])
         self.k_trend.setze(
             "Aufwärts" if tr > 0 else "Abwärts",
@@ -4082,7 +4186,7 @@ class Menueleiste(QObject):
             if not d:
                 continue
             preis, ch, _ = kurs_jetzt(d)
-            sig = s.empfehlung(int(d["df"]["score"].iloc[-1]))
+            sig = signal_von(d)
             a = m.addAction(f"{t}   {kurs_text(preis)} {d['waehrung']}   {pfeil(ch)}   · {sig}")
             a.triggered.connect(lambda _=False, t=t: (self.f.zeigen(), self.f.oeffnen(t)))
         m.addSeparator()
@@ -4372,8 +4476,8 @@ class MarktSeite(QWidget):
             p_eur = preis * d["eur_faktor"]
             z = d["df"].iloc[-1]
             score = int(z["score"])
-            sig = s.empfehlung(score)
-            rsi = float(z["rsi"])
+            sig = signal_von(d)
+            rsi = float(z["rsi"]) if z["rsi"] == z["rsi"] else 50.0
             div = float((d.get("info") or {}).get("dividendYield") or 0)
             if f["art"] != "alle" and d["typ"] != f["art"]:
                 continue
@@ -5802,7 +5906,7 @@ class Fenster(QMainWindow):
         treffer = []
         for t in self.im_bereich(self.alle_tickers()):
             d = self.daten.get(t)
-            if d and s.empfehlung(int(d["df"]["score"].iloc[-1])) == "KAUFEN":
+            if d and signal_von(d) == "KAUFEN":
                 z = d["df"].iloc[-1]
                 treffer.append((-int(z["score"]), float(z["rsi"]), t))
         return [t for *_, t in sorted(treffer)]
@@ -6312,7 +6416,9 @@ class Fenster(QMainWindow):
             self.zeige_leer("Suche oben links nach einer Aktie, einem ETF oder einer "
                             "Kryptowährung.")
         elif t in self.fehler:
-            self.zeige_leer(f"Für {t} wurden keine Kursdaten gefunden.")
+            self.zeige_leer(f"Für „{t}“ wurden keine Kursdaten gefunden.\n\nPrüfe die Schreibweise "
+                            "oder such über das Suchfeld bzw. {0}K nach dem Namen – Vyntro "
+                            "schlägt dann den passenden Ticker vor.".format(pfade.TASTE))
         elif t not in self.daten:
             self.zeige_leer(f"{t} wird geladen …")
         else:
@@ -6613,7 +6719,7 @@ class Fenster(QMainWindow):
         if dlg.exec() != QDialog.Accepted:
             return
         art = dlg.art()
-        signal = s.empfehlung(int(d["df"]["score"].iloc[-1]))
+        signal = signal_von(d)
         ohne_wert = art in ("signal", "hoch52", "tief52")
         self.alarme.append(konto.alarm(ticker, art, None if ohne_wert else dlg.wert.value(),
                                        signal))
@@ -6664,7 +6770,9 @@ class Fenster(QMainWindow):
         d = self.daten.get(ticker)
         if not d:
             return
-        jetzt = s.empfehlung(int(d["df"]["score"].iloc[-1]))
+        jetzt = signal_von(d)
+        if jetzt == "NEU":
+            return  # noch kein Signal – Signal-Alarme warten
         geaendert = False
         for a in self.alarme:
             if a["ticker"] != ticker or a["art"] != "signal" or not a["aktiv"]:
